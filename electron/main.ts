@@ -21,7 +21,7 @@ function createWindow(): void {
     autoHideMenuBar: true,
     titleBarStyle: process.platform === 'darwin' ? 'hiddenInset' : 'default',
     webPreferences: {
-      preload: join(__dirname, '../preload/index.js'),
+      preload: join(__dirname, '../preload/preload.js'),
       sandbox: false,
       contextIsolation: true,
       nodeIntegration: false,
@@ -30,6 +30,7 @@ function createWindow(): void {
 
   mainWindow.on('ready-to-show', () => {
     mainWindow!.show()
+    if (is.dev) mainWindow!.webContents.openDevTools()
   })
 
   mainWindow.webContents.setWindowOpenHandler(({ url }) => {
