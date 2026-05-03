@@ -182,6 +182,34 @@ export function registerCertificateHandlers(): void {
     return []
   })
 
+  ipcMain.handle('certificates:openBatchPortal', async (_, data: {
+    certs: Array<{ id: number; serialNumber: string; alias: string }>
+    url: string
+  }) => {
+    for (let i = 0; i < data.certs.length; i++) {
+      const cert = data.certs[i]
+      const win = new BrowserWindow({
+        width: 1280,
+        height: 900,
+        title: `${cert.alias} — ÁureaCert`,
+        webPreferences: { sandbox: true },
+      })
+
+      win.webContents.on('select-client-certificate', (event, _url, list, callback) => {
+        event.preventDefault()
+        const match = list.find((c) =>
+          c.serialNumber?.toLowerCase().replace(/^0+/, '') ===
+          cert.serialNumber?.toLowerCase().replace(/^0+/, '')
+        )
+        callback(match ?? list[0] ?? undefined!)
+      })
+
+      await new Promise<void>((resolve) => setTimeout(resolve, i * 600))
+      win.loadURL(data.url)
+    }
+    return { success: true, opened: data.certs.length }
+  })
+
   ipcMain.handle('certificates:importFromOsStore', async (_, data: {
     thumbprint: string
     alias: string

@@ -24,6 +24,8 @@ const api = {
     delete: (id: number) => ipcRenderer.invoke('certificates:delete', id),
     getAuditLog: (certId?: number) => ipcRenderer.invoke('certificates:getAuditLog', certId),
     openPortal: (certId: number, url: string) => ipcRenderer.invoke('certificates:openPortal', certId, url),
+    openBatchPortal: (data: { certs: Array<{ id: number; serialNumber: string; alias: string }>; url: string }) =>
+      ipcRenderer.invoke('certificates:openBatchPortal', data),
     scanOsStore: () => ipcRenderer.invoke('certificates:scanOsStore'),
     importFromOsStore: (data: { thumbprint: string; alias: string; clientId: number | null; masterPassword: string }) =>
       ipcRenderer.invoke('certificates:importFromOsStore', data),
