@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 
 interface SettingsMap {
   despacho_name?: string
@@ -20,8 +20,19 @@ export default function Settings() {
   const [saved, setSaved] = useState(false)
   const [activeTab, setActiveTab] = useState<'despacho' | 'smtp' | 'security'>('despacho')
 
+  const [hasLockPassword, setHasLockPassword] = useState(false)
+  const [lockPwdMode, setLockPwdMode] = useState<'idle' | 'set' | 'change' | 'remove'>('idle')
+  const [lockPwdFields, setLockPwdFields] = useState({ current: '', new: '', confirm: '' })
+  const [lockPwdError, setLockPwdError] = useState('')
+  const [lockPwdOk, setLockPwdOk] = useState(false)
+  const lockPwdRef = useRef<HTMLInputElement>(null)
+
   useEffect(() => {
-    window.api.settings.getAll().then((data) => setSettings(data as SettingsMap))
+    window.api.settings.getAll().then((data) => {
+      const s = data as SettingsMap & { lock_password_hash?: string }
+      setSettings(s)
+      setHasLockPassword(!!s.lock_password_hash)
+    })
   }, [])
 
   const set = (key: keyof SettingsMap, value: string) => {
@@ -41,6 +52,35 @@ export default function Settings() {
     } finally {
       setSaving(false)
     }
+  }
+
+  const resetLockPwd = () => {
+    setLockPwdMode('idle')
+    setLockPwdFields({ current: '', new: '', confirm: '' })
+    setLockPwdError('')
+    setLockPwdOk(false)
+  }
+
+  const handleSetLockPassword = async () => {
+    const { current, new: np, confirm } = lockPwdFields
+    if (lockPwdMode === 'change') {
+      const ok = await window.api.settings.verifyLockPassword(current) as boolean
+      if (!ok) { setLockPwdError('La contraseña actual es incorrecta'); return }
+    }
+    if (lockPwdMode === 'remove') {
+      const ok = await window.api.settings.verifyLockPassword(current) as boolean
+      if (!ok) { setLockPwdError('Contraseña incorrecta'); return }
+      await window.api.settings.removeLockPassword()
+      setHasLockPassword(false)
+      resetLockPwd()
+      return
+    }
+    if (np.length < 4) { setLockPwdError('La contraseña debe tener al menos 4 caracteres'); return }
+    if (np !== confirm) { setLockPwdError('Las contraseñas no coinciden'); return }
+    await window.api.settings.setLockPassword(np)
+    setHasLockPassword(true)
+    setLockPwdOk(true)
+    setTimeout(() => resetLockPwd(), 2000)
   }
 
   const TABS = [
@@ -211,10 +251,11 @@ export default function Settings() {
             </div>
           </div>
 
-          <div className="card p-6 space-y-4">
+          <div className="card p-6 space-y-5">
             <div className="kicker mb-1" style={{ fontSize: '9px' }}>Bloqueo de sesión</div>
+
             <div>
-              <label className="field-label">Tiempo de inactividad antes de bloquear (minutos)</label>
+              <label className="field-label">Tiempo de inactividad antes de bloquear</label>
               <select
                 className="field-select"
                 style={{ width: '200px' }}
@@ -228,6 +269,99 @@ export default function Settings() {
                 <option value="30">30 minutos</option>
                 <option value="60">1 hora</option>
               </select>
+            </div>
+
+            <div style={{ borderTop: '1px solid var(--color-border)', paddingTop: '1.25rem' }}>
+              <div className="flex items-center justify-between mb-3">
+                <div>
+                  <label className="field-label" style={{ margin: 0 }}>Contraseña de bloqueo</label>
+                  <p style={{ fontSize: '11px', color: 'var(--color-text-muted)', marginTop: '0.2rem' }}>
+                    {hasLockPassword ? '✓ Contraseña configurada' : 'Sin contraseña — cualquiera puede desbloquear'}
+                  </p>
+                </div>
+                {lockPwdMode === 'idle' && (
+                  <div className="flex gap-2">
+                    {hasLockPassword ? (
+                      <>
+                        <button className="btn-secondary" style={{ fontSize: '11px' }} onClick={() => { setLockPwdMode('change'); setTimeout(() => lockPwdRef.current?.focus(), 50) }}>
+                          Cambiar
+                        </button>
+                        <button className="btn-ghost" style={{ fontSize: '11px', color: 'var(--color-danger, #ef4444)' }} onClick={() => { setLockPwdMode('remove'); setTimeout(() => lockPwdRef.current?.focus(), 50) }}>
+                          Eliminar
+                        </button>
+                      </>
+                    ) : (
+                      <button className="btn-secondary" style={{ fontSize: '11px' }} onClick={() => { setLockPwdMode('set'); setTimeout(() => lockPwdRef.current?.focus(), 50) }}>
+                        Establecer contraseña
+                      </button>
+                    )}
+                  </div>
+                )}
+              </div>
+
+              {lockPwdMode !== 'idle' && (
+                <div className="space-y-3" style={{ background: 'var(--color-bg-secondary)', padding: '1rem', marginTop: '0.5rem' }}>
+                  {lockPwdOk && (
+                    <p style={{ fontSize: '12px', color: 'var(--color-success, #34d399)' }}>
+                      ✓ {lockPwdMode === 'remove' ? 'Contraseña eliminada' : 'Contraseña guardada'}
+                    </p>
+                  )}
+                  {(lockPwdMode === 'change' || lockPwdMode === 'remove') && (
+                    <div>
+                      <label className="field-label">Contraseña actual</label>
+                      <input
+                        ref={lockPwdRef}
+                        className="field-input"
+                        type="password"
+                        value={lockPwdFields.current}
+                        onChange={(e) => { setLockPwdFields((f) => ({ ...f, current: e.target.value })); setLockPwdError('') }}
+                        placeholder="Contraseña actual"
+                        autoComplete="off"
+                      />
+                    </div>
+                  )}
+                  {(lockPwdMode === 'set' || lockPwdMode === 'change') && (
+                    <>
+                      <div>
+                        <label className="field-label">Nueva contraseña</label>
+                        <input
+                          ref={lockPwdMode === 'set' ? lockPwdRef : undefined}
+                          className="field-input"
+                          type="password"
+                          value={lockPwdFields.new}
+                          onChange={(e) => { setLockPwdFields((f) => ({ ...f, new: e.target.value })); setLockPwdError('') }}
+                          placeholder="Mínimo 4 caracteres"
+                          autoComplete="new-password"
+                        />
+                      </div>
+                      <div>
+                        <label className="field-label">Confirmar contraseña</label>
+                        <input
+                          className="field-input"
+                          type="password"
+                          value={lockPwdFields.confirm}
+                          onChange={(e) => { setLockPwdFields((f) => ({ ...f, confirm: e.target.value })); setLockPwdError('') }}
+                          placeholder="Repite la contraseña"
+                          autoComplete="new-password"
+                        />
+                      </div>
+                    </>
+                  )}
+                  {lockPwdError && (
+                    <p style={{ fontSize: '12px', color: 'var(--color-danger, #ef4444)' }}>{lockPwdError}</p>
+                  )}
+                  <div className="flex gap-2 justify-end">
+                    <button className="btn-ghost" style={{ fontSize: '11px' }} onClick={resetLockPwd}>Cancelar</button>
+                    <button
+                      className={lockPwdMode === 'remove' ? 'btn-ghost' : 'btn-primary'}
+                      style={{ fontSize: '11px', ...(lockPwdMode === 'remove' ? { color: 'var(--color-danger, #ef4444)' } : {}) }}
+                      onClick={handleSetLockPassword}
+                    >
+                      {lockPwdMode === 'set' ? 'Guardar contraseña' : lockPwdMode === 'change' ? 'Cambiar contraseña' : 'Confirmar eliminación'}
+                    </button>
+                  </div>
+                </div>
+              )}
             </div>
           </div>
 

@@ -55,6 +55,9 @@ const api = {
     get: (key: string) => ipcRenderer.invoke('settings:get', key),
     set: (key: string, value: unknown) => ipcRenderer.invoke('settings:set', key, value),
     getAll: () => ipcRenderer.invoke('settings:getAll'),
+    setLockPassword: (password: string) => ipcRenderer.invoke('settings:setLockPassword', password),
+    verifyLockPassword: (password: string) => ipcRenderer.invoke('settings:verifyLockPassword', password),
+    removeLockPassword: () => ipcRenderer.invoke('settings:removeLockPassword'),
   },
 }
 

@@ -1,6 +1,7 @@
-import { useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { HashRouter, Routes, Route, Navigate } from 'react-router-dom'
 import Layout from '@components/layout/Layout'
+import LockScreen from '@components/LockScreen'
 import Dashboard from '@pages/Dashboard'
 import Clients from '@pages/Clients'
 import Certificates from '@pages/Certificates'
@@ -12,21 +13,35 @@ import Settings from '@pages/Settings'
 
 export default function App() {
   const [locked, setLocked] = useState(false)
+  const [lockTimeout, setLockTimeout] = useState(0)
+  const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+
+  useEffect(() => {
+    window.api.settings.get('lock_timeout_minutes').then((val) => {
+      setLockTimeout(parseInt((val as string) ?? '0') || 0)
+    })
+  }, [])
+
+  useEffect(() => {
+    if (lockTimeout <= 0 || locked) return
+
+    const reset = () => {
+      if (timerRef.current) clearTimeout(timerRef.current)
+      timerRef.current = setTimeout(() => setLocked(true), lockTimeout * 60 * 1000)
+    }
+
+    const events = ['mousedown', 'keydown', 'scroll', 'touchstart'] as const
+    events.forEach((e) => window.addEventListener(e, reset))
+    reset()
+
+    return () => {
+      if (timerRef.current) clearTimeout(timerRef.current)
+      events.forEach((e) => window.removeEventListener(e, reset))
+    }
+  }, [lockTimeout, locked])
 
   if (locked) {
-    return (
-      <div className="flex items-center justify-center h-full bg-bg-primary">
-        <div className="text-center">
-          <p className="eyebrow mb-4">Áurea Certificados</p>
-          <h1 className="font-serif text-4xl font-bold text-text-primary mb-8">
-            Sesión bloqueada
-          </h1>
-          <button className="btn-primary" onClick={() => setLocked(false)}>
-            Desbloquear
-          </button>
-        </div>
-      </div>
-    )
+    return <LockScreen onUnlock={() => setLocked(false)} />
   }
 
   return (

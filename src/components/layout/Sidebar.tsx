@@ -83,6 +83,19 @@ export default function Sidebar() {
                 <span style={{ fontSize: '13px', fontWeight: 500 }}>{item.label}</span>
               </NavLink>
             ))}
+            {group.group === 'Trámites' && (
+              <button
+                className="flex items-center gap-3 px-3 py-2.5 mb-0.5 w-full border-l-2 border-transparent transition-all"
+                style={{ color: 'var(--color-text-secondary)', background: 'transparent', textAlign: 'left' }}
+                onMouseEnter={(e) => (e.currentTarget.style.color = 'var(--color-text-primary)')}
+                onMouseLeave={(e) => (e.currentTarget.style.color = 'var(--color-text-secondary)')}
+                onClick={() => window.api.app.openExternal('https://dehu.redsara.es/')}
+              >
+                <IconDEHU size={16} />
+                <span style={{ fontSize: '13px', fontWeight: 500 }}>DEHU</span>
+                <span style={{ fontSize: '9px', color: 'var(--color-text-muted)', marginLeft: 'auto' }}>↗</span>
+              </button>
+            )}
           </div>
         ))}
       </nav>
@@ -158,6 +171,14 @@ function IconCalendar({ size = 18 }: { size?: number }) {
   return (
     <svg width={size} height={size} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
       <path strokeLinecap="round" strokeLinejoin="round" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
+    </svg>
+  )
+}
+
+function IconDEHU({ size = 18 }: { size?: number }) {
+  return (
+    <svg width={size} height={size} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+      <path strokeLinecap="round" strokeLinejoin="round" d="M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" />
     </svg>
   )
 }
