@@ -3,6 +3,7 @@ import { differenceInDays, parseISO, format } from 'date-fns'
 import { es } from 'date-fns/locale'
 import ImportCertForm from './ImportCertForm'
 import AuditLogPanel from './AuditLogPanel'
+import ImportFromOsStoreModal from './ImportFromOsStoreModal'
 
 interface Certificate {
   id: number
@@ -21,6 +22,7 @@ export default function Certificates() {
   const [certs, setCerts] = useState<Certificate[]>([])
   const [search, setSearch] = useState('')
   const [showImport, setShowImport] = useState(false)
+  const [showOsStore, setShowOsStore] = useState(false)
   const [showAudit, setShowAudit] = useState(false)
   const [filter, setFilter] = useState<'all' | 'expiring' | 'expired'>('all')
 
@@ -70,8 +72,11 @@ export default function Certificates() {
           <button className="btn-secondary" onClick={() => setShowAudit(true)}>
             Registro de uso
           </button>
+          <button className="btn-secondary" onClick={() => setShowOsStore(true)}>
+            Importar desde Windows
+          </button>
           <button className="btn-primary" onClick={() => setShowImport(true)}>
-            + Importar certificado
+            + Importar .p12 / .pfx
           </button>
         </div>
       </div>
@@ -167,6 +172,12 @@ export default function Certificates() {
         <ImportCertForm
           onClose={() => setShowImport(false)}
           onImported={() => { load(); setShowImport(false) }}
+        />
+      )}
+      {showOsStore && (
+        <ImportFromOsStoreModal
+          onClose={() => setShowOsStore(false)}
+          onImported={() => { load(); setShowOsStore(false) }}
         />
       )}
       {showAudit && <AuditLogPanel onClose={() => setShowAudit(false)} />}

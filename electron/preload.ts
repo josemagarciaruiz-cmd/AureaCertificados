@@ -25,8 +25,8 @@ const api = {
     getAuditLog: (certId?: number) => ipcRenderer.invoke('certificates:getAuditLog', certId),
     openPortal: (certId: number, url: string) => ipcRenderer.invoke('certificates:openPortal', certId, url),
     scanOsStore: () => ipcRenderer.invoke('certificates:scanOsStore'),
-    importFromOsStore: (thumbprint: string, password: string) =>
-      ipcRenderer.invoke('certificates:importFromOsStore', thumbprint, password),
+    importFromOsStore: (data: { thumbprint: string; alias: string; clientId: number | null; masterPassword: string }) =>
+      ipcRenderer.invoke('certificates:importFromOsStore', data),
     parseP12: (filePath: string, password: string) =>
       ipcRenderer.invoke('certificates:parseP12', filePath, password),
   },

@@ -2,7 +2,10 @@ import { ipcMain, BrowserWindow } from 'electron'
 import { getDb } from './database'
 import * as forge from 'node-forge'
 import * as crypto from 'crypto'
-import { readFileSync } from 'fs'
+import { readFileSync, unlinkSync } from 'fs'
+import { tmpdir } from 'os'
+import { join } from 'path'
+import { execSync } from 'child_process'
 
 const ALGORITHM = 'aes-256-gcm'
 
@@ -175,27 +178,82 @@ export function registerCertificateHandlers(): void {
   })
 
   ipcMain.handle('certificates:scanOsStore', async () => {
-    if (process.platform === 'win32') {
-      return scanWindowsCertStore()
-    }
+    if (process.platform === 'win32') return scanWindowsCertStore()
     return []
+  })
+
+  ipcMain.handle('certificates:importFromOsStore', async (_, data: {
+    thumbprint: string
+    alias: string
+    clientId: number | null
+    masterPassword: string
+  }) => {
+    if (process.platform !== 'win32') throw new Error('Solo disponible en Windows')
+    return importCertFromWindowsStore(data.thumbprint, data.alias, data.clientId, data.masterPassword)
   })
 }
 
-async function scanWindowsCertStore(): Promise<unknown[]> {
-  const { execSync } = await import('child_process')
+function scanWindowsCertStore(): unknown[] {
   try {
-    const output = execSync(`powershell -Command "
-      Get-ChildItem Cert:\\CurrentUser\\My |
-      Select-Object Thumbprint, Subject, Issuer,
-        @{N='NotBefore';E={$_.NotBefore.ToString('yyyy-MM-ddTHH:mm:ss')}},
-        @{N='NotAfter';E={$_.NotAfter.ToString('yyyy-MM-ddTHH:mm:ss')}},
-        @{N='HasPrivateKey';E={$_.HasPrivateKey}},
-        @{N='Exportable';E={try{$_.PrivateKey.CspKeyContainerInfo.Exportable}catch{'unknown'}}}
-      | ConvertTo-Json"`, { encoding: 'utf8', timeout: 10000 })
-    const certs = JSON.parse(output)
-    return Array.isArray(certs) ? certs : [certs]
+    const output = execSync(
+      `powershell -Command "Get-ChildItem Cert:\\CurrentUser\\My | Select-Object Thumbprint, Subject, Issuer, @{N='NotBefore';E={$_.NotBefore.ToString('yyyy-MM-ddTHH:mm:ss')}}, @{N='NotAfter';E={$_.NotAfter.ToString('yyyy-MM-ddTHH:mm:ss')}}, @{N='HasPrivateKey';E={$_.HasPrivateKey}}, @{N='Exportable';E={try{$_.PrivateKey.CspKeyContainerInfo.Exportable}catch{'unknown'}}} | ConvertTo-Json -Compress"`,
+      { encoding: 'utf8', timeout: 10000 }
+    )
+    const raw = JSON.parse(output.trim())
+    return Array.isArray(raw) ? raw : [raw]
   } catch {
     return []
+  }
+}
+
+async function importCertFromWindowsStore(
+  thumbprint: string,
+  alias: string,
+  clientId: number | null,
+  masterPassword: string
+): Promise<unknown> {
+  const tempPass = crypto.randomBytes(16).toString('hex')
+  const tempDir = tmpdir().replace(/\\/g, '/')
+  const tempPath = join(tempDir, `aurea-${Date.now()}.pfx`)
+
+  try {
+    execSync(
+      `powershell -Command "$cert = Get-ChildItem -Path 'Cert:\\CurrentUser\\My\\${thumbprint}'; $pwd = ConvertTo-SecureString -String '${tempPass}' -Force -AsPlainText; Export-PfxCertificate -Cert $cert -FilePath '${tempPath}' -Password $pwd | Out-Null"`,
+      { encoding: 'utf8', timeout: 30000 }
+    )
+
+    const buffer = readFileSync(tempPath)
+    const info = parseP12Info(buffer, tempPass)
+    const { encrypted, iv, salt } = encryptP12(buffer, masterPassword)
+
+    const result = getDb().prepare(`
+      INSERT INTO certificates
+        (client_id, alias, issuer, serial_number, subject, valid_from, valid_to,
+         encrypted_p12, iv, salt, fingerprint, source)
+      VALUES
+        (@clientId, @alias, @issuer, @serialNumber, @subject, @validFrom, @validTo,
+         @encrypted, @iv, @salt, @fingerprint, 'windows_store')
+    `).run({
+      clientId,
+      alias,
+      issuer: info.issuer,
+      serialNumber: info.serialNumber,
+      subject: info.subject,
+      validFrom: info.validFrom,
+      validTo: info.validTo,
+      encrypted,
+      iv,
+      salt,
+      fingerprint: info.fingerprint,
+    })
+
+    getDb().prepare(`
+      INSERT INTO audit_log (certificate_id, certificate_alias, client_name, action)
+      VALUES (?, ?, (SELECT name FROM clients WHERE id = ?), 'import_os_store')
+    `).run(result.lastInsertRowid, alias, clientId)
+
+    return getDb().prepare('SELECT * FROM certificates WHERE id = ?').get(result.lastInsertRowid)
+  } finally {
+    try { unlinkSync(tempPath) } catch { /* temp file cleanup */ }
   }
 }

@@ -35,6 +35,12 @@ export default function TramitesAEAT() {
             {AEAT_MODELS.length} modelos y trámites disponibles
           </p>
         </div>
+        <button
+          className="btn-secondary"
+          onClick={() => window.api.app.openExternal('https://sede.agenciatributaria.gob.es/Sede/consultas-informatizadas/declaraciones-censales/consulta-declaraciones-presentadas.html')}
+        >
+          Consulta declaraciones presentadas →
+        </button>
       </div>
 
       {/* Filters */}
