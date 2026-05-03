@@ -2,7 +2,7 @@
   "name": "aurea-certificados",
   "version": "1.0.0",
   "description": "Gestión de certificados digitales y trámites AEAT/TGSS para gestorías y asesorías",
-  "main": "out/main/main.js",
+  "main": "out/main/index.js",
   "scripts": {
     "dev": "electron-vite dev",
     "build": "electron-vite build",

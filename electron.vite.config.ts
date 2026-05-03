@@ -5,8 +5,11 @@ import react from '@vitejs/plugin-react'
 export default defineConfig({
   main: {
     build: {
-      lib: {
-        entry: resolve('electron/main.ts'),
+      rollupOptions: {
+        input: resolve('electron/main.ts'),
+        output: {
+          entryFileNames: 'index.js',
+        }
       }
     },
     plugins: [externalizeDepsPlugin()],
