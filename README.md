@@ -14,7 +14,15 @@ Construida con **Electron 29 · React 18 · TypeScript · SQLite**.
 | npm | 10+ | Incluido con Node |
 | Git | cualquiera | |
 | Xcode Command Line Tools *(macOS)* | — | `xcode-select --install` |
-| Build Tools *(Windows)* | — | `npm install -g windows-build-tools` en PowerShell como Admin |
+| Visual Studio Build Tools 2022 *(Windows)* | — | Ver instrucciones abajo |
+
+### Windows: instalar herramientas de compilación
+
+`better-sqlite3` y `keytar` necesitan un compilador C++. Tienes dos opciones:
+
+**Opción A (recomendada):** Al instalar Node.js desde [nodejs.org](https://nodejs.org), marca la casilla **"Automatically install the necessary tools"**. Se instalará Chocolatey, Python y Visual Studio Build Tools automáticamente.
+
+**Opción B (manual):** Descarga e instala [Visual Studio Build Tools 2022](https://visualstudio.microsoft.com/visual-cpp-build-tools/) y selecciona el componente **"Desarrollo de escritorio con C++"**.
 
 ---
 
