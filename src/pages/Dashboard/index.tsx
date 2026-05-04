@@ -2,21 +2,15 @@ import { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { format, differenceInDays, parseISO } from 'date-fns'
 import { es } from 'date-fns/locale'
+import { AEAT_MODELS } from '@data/aeat-models'
+import { TGSS_TRAMITES } from '@data/tgss-tramites'
+import CertPickerModal from '@components/CertPickerModal'
 
 interface UpcomingDeadline {
   id: number
   name: string
   model_number: string
   due_date: string
-  category: string
-}
-
-interface UpcomingProcedure {
-  id: number
-  name: string
-  client_name: string
-  due_date: string
-  status: string
   category: string
 }
 
@@ -27,24 +21,51 @@ interface ExpiringCert {
   valid_to: string
 }
 
+interface QuickAccess {
+  label: string
+  sublabel: string
+  color: string
+  portalUrl: string
+}
+
+const aeat = (model: string): QuickAccess | null => {
+  const m = AEAT_MODELS.find((x) => x.model === model)
+  if (!m) return null
+  return { label: `Modelo ${m.model}`, sublabel: m.name, color: '#c9a84c', portalUrl: m.portal_url }
+}
+
+const tgss = (id: string): QuickAccess | null => {
+  const t = TGSS_TRAMITES.find((x) => x.id === id)
+  if (!t) return null
+  return { label: t.name, sublabel: t.system, color: '#60a5fa', portalUrl: t.portal_url }
+}
+
+const QUICK_ACCESS: QuickAccess[] = [
+  tgss('vida-laboral')!,
+  tgss('jubilacion')!,
+  tgss('idc-reta')!,
+  tgss('alta-reta')!,
+  tgss('baja-reta')!,
+  aeat('111')!,
+  aeat('190')!,
+  { label: 'DEHU', sublabel: 'Notificaciones electrónicas', color: '#06b6d4', portalUrl: 'https://dehu.redsara.es/' },
+].filter(Boolean)
+
 export default function Dashboard() {
   const navigate = useNavigate()
   const [deadlines, setDeadlines] = useState<UpcomingDeadline[]>([])
-  const [procedures, setProcedures] = useState<UpcomingProcedure[]>([])
   const [expiringCerts, setExpiringCerts] = useState<ExpiringCert[]>([])
-  const [stats, setStats] = useState({ clients: 0, certs: 0, procedures: 0, notifications: 0 })
+  const [stats, setStats] = useState({ clients: 0, certs: 0, notifications: 0 })
+  const [certPicker, setCertPicker] = useState<QuickAccess | null>(null)
 
   useEffect(() => {
     Promise.all([
       window.api.calendar.getUpcoming(30),
-      window.api.procedures.getUpcoming(30),
       window.api.clients.getAll(),
       window.api.certificates.getAll(),
-      window.api.procedures.getAll(),
       window.api.notifications.getAll(),
-    ]).then(([dl, proc, clients, certs, allProc, notifs]) => {
+    ]).then(([dl, clients, certs, notifs]) => {
       setDeadlines((dl as UpcomingDeadline[]).slice(0, 8))
-      setProcedures((proc as UpcomingProcedure[]).slice(0, 6))
       const today = new Date()
       const expiring = (certs as ExpiringCert[]).filter((c) => {
         if (!c.valid_to) return false
@@ -55,7 +76,6 @@ export default function Dashboard() {
       setStats({
         clients: (clients as unknown[]).length,
         certs: (certs as unknown[]).length,
-        procedures: (allProc as { status: string }[]).filter((p) => p.status === 'pending' || p.status === 'in_progress').length,
         notifications: (notifs as { status: string }[]).filter((n) => n.status === 'unread').length,
       })
     })
@@ -75,13 +95,56 @@ export default function Dashboard() {
 
   return (
     <div className="space-y-6">
+
+      {/* Accesos rápidos */}
+      <div>
+        <div className="kicker mb-1">Accesos rápidos</div>
+        <div className="divider-gold-thin mb-4" style={{ width: '40px' }} />
+        <div className="grid grid-cols-4 gap-3">
+          {QUICK_ACCESS.map((q) => (
+            <div
+              key={q.label}
+              className="card p-0"
+              style={{ borderTop: `2px solid ${q.color}` }}
+            >
+              <div style={{ padding: '0.875rem 1rem 0.625rem' }}>
+                <div style={{ fontSize: '13px', fontWeight: 600, color: 'var(--color-text-primary)', marginBottom: '2px', lineHeight: 1.3 }}>
+                  {q.label}
+                </div>
+                <div style={{ fontSize: '10px', color: 'var(--color-text-muted)', lineHeight: 1.3, minHeight: '2.2em' }}>
+                  {q.sublabel}
+                </div>
+              </div>
+              <div
+                className="flex gap-1"
+                style={{ padding: '0 0.625rem 0.625rem' }}
+              >
+                <button
+                  className="btn-ghost"
+                  style={{ fontSize: '10px', flex: 1, justifyContent: 'center' }}
+                  onClick={() => window.api.app.openExternal(q.portalUrl)}
+                >
+                  Sede →
+                </button>
+                <button
+                  className="btn-ghost"
+                  style={{ fontSize: '10px', flex: 1, justifyContent: 'center', color: 'var(--color-accent)' }}
+                  onClick={() => setCertPicker(q)}
+                >
+                  Con cert. →
+                </button>
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
+
       {/* Stats */}
-      <div className="grid grid-cols-4 gap-4">
+      <div className="grid grid-cols-3 gap-4">
         {[
-          { label: 'Clientes activos', value: stats.clients, icon: '👥', path: '/clients' },
-          { label: 'Certificados', value: stats.certs, icon: '🔐', path: '/certificates' },
-          { label: 'Trámites activos', value: stats.procedures, icon: '📋', path: '/tramites/aeat' },
-          { label: 'Notificaciones nuevas', value: stats.notifications, icon: '🔔', path: '/notifications' },
+          { label: 'Clientes activos', value: stats.clients, path: '/clients' },
+          { label: 'Certificados', value: stats.certs, path: '/certificates' },
+          { label: 'Notificaciones nuevas', value: stats.notifications, path: '/notifications' },
         ].map((s) => (
           <div
             key={s.label}
@@ -157,65 +220,46 @@ export default function Dashboard() {
           </div>
         </div>
 
-        {/* Columna derecha */}
-        <div className="space-y-4">
-          {/* Certificados próximos a caducar */}
-          <div className="card p-0">
-            <div className="px-4 py-3 border-b" style={{ borderColor: 'var(--color-border)' }}>
-              <div className="kicker" style={{ fontSize: '9px' }}>Alerta</div>
-              <div className="font-serif font-bold" style={{ color: 'var(--color-text-primary)', fontSize: '15px' }}>
-                Certificados
-              </div>
-            </div>
-            <div>
-              {expiringCerts.length === 0 ? (
-                <div className="px-4 py-4 text-center" style={{ color: 'var(--color-text-muted)', fontSize: '12px' }}>
-                  Sin alertas de caducidad
-                </div>
-              ) : (
-                expiringCerts.map((c) => {
-                  const days = daysUntil(c.valid_to)
-                  return (
-                    <div key={c.id} className="flex items-center justify-between px-4 py-2.5 border-b" style={{ borderColor: 'var(--color-border)' }}>
-                      <div>
-                        <div style={{ fontSize: '12px', color: 'var(--color-text-primary)', fontWeight: 500 }}>{c.alias}</div>
-                        <div style={{ fontSize: '11px', color: 'var(--color-text-muted)' }}>{c.client_name}</div>
-                      </div>
-                      <span className={`badge ${days <= 15 ? 'badge-critical' : 'badge-warning'}`}>
-                        {days}d
-                      </span>
-                    </div>
-                  )
-                })
-              )}
+        {/* Certificados próximos a caducar */}
+        <div className="card p-0">
+          <div className="px-4 py-3 border-b" style={{ borderColor: 'var(--color-border)' }}>
+            <div className="kicker" style={{ fontSize: '9px' }}>Alerta</div>
+            <div className="font-serif font-bold" style={{ color: 'var(--color-text-primary)', fontSize: '15px' }}>
+              Certificados
             </div>
           </div>
-
-          {/* Trámites activos */}
-          <div className="card p-0">
-            <div className="px-4 py-3 border-b" style={{ borderColor: 'var(--color-border)' }}>
-              <div className="kicker" style={{ fontSize: '9px' }}>Pendientes</div>
-              <div className="font-serif font-bold" style={{ color: 'var(--color-text-primary)', fontSize: '15px' }}>
-                Trámites
+          <div>
+            {expiringCerts.length === 0 ? (
+              <div className="px-4 py-4 text-center" style={{ color: 'var(--color-text-muted)', fontSize: '12px' }}>
+                Sin alertas de caducidad
               </div>
-            </div>
-            <div>
-              {procedures.length === 0 ? (
-                <div className="px-4 py-4 text-center" style={{ color: 'var(--color-text-muted)', fontSize: '12px' }}>
-                  Sin trámites urgentes
-                </div>
-              ) : (
-                procedures.map((p) => (
-                  <div key={p.id} className="px-4 py-2.5 border-b" style={{ borderColor: 'var(--color-border)' }}>
-                    <div style={{ fontSize: '12px', color: 'var(--color-text-primary)', fontWeight: 500 }}>{p.name}</div>
-                    <div style={{ fontSize: '11px', color: 'var(--color-text-muted)' }}>{p.client_name}</div>
+            ) : (
+              expiringCerts.map((c) => {
+                const days = daysUntil(c.valid_to)
+                return (
+                  <div key={c.id} className="flex items-center justify-between px-4 py-2.5 border-b" style={{ borderColor: 'var(--color-border)' }}>
+                    <div>
+                      <div style={{ fontSize: '12px', color: 'var(--color-text-primary)', fontWeight: 500 }}>{c.alias}</div>
+                      <div style={{ fontSize: '11px', color: 'var(--color-text-muted)' }}>{c.client_name}</div>
+                    </div>
+                    <span className={`badge ${days <= 15 ? 'badge-critical' : 'badge-warning'}`}>
+                      {days}d
+                    </span>
                   </div>
-                ))
-              )}
-            </div>
+                )
+              })
+            )}
           </div>
         </div>
       </div>
+
+      {certPicker && (
+        <CertPickerModal
+          tramiteName={certPicker.label}
+          portalUrl={certPicker.portalUrl}
+          onClose={() => setCertPicker(null)}
+        />
+      )}
     </div>
   )
 }
