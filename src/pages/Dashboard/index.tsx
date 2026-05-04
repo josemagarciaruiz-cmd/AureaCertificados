@@ -53,14 +53,21 @@ const QUICK_ACCESS: QuickAccess[] = [
   { label: 'IMPORTASS', sublabel: 'Portal autónomos Seg. Social', color: '#34d399', portalUrl: 'https://portal.seg-social.gob.es/wps/portal/importass/importass' },
 ].filter(Boolean)
 
+type UsageMap = Record<string, { count: number; lastUsed: string }>
+
 export default function Dashboard() {
   const navigate = useNavigate()
   const [deadlines, setDeadlines] = useState<UpcomingDeadline[]>([])
   const [expiringCerts, setExpiringCerts] = useState<ExpiringCert[]>([])
   const [stats, setStats] = useState({ clients: 0, certs: 0, notifications: 0 })
   const [certPicker, setCertPicker] = useState<QuickAccess | null>(null)
+  const [usage, setUsage] = useState<UsageMap>({})
 
   useEffect(() => {
+    window.api.settings.get('quick_access_usage').then((val) => {
+      if (val) setUsage(JSON.parse(val as string) as UsageMap)
+    })
+
     Promise.all([
       window.api.calendar.getUpcoming(30),
       window.api.clients.getAll(),
@@ -83,6 +90,25 @@ export default function Dashboard() {
     })
   }, [])
 
+  const trackUsage = (url: string) => {
+    setUsage((prev) => {
+      const entry = prev[url] ?? { count: 0, lastUsed: '' }
+      const next = { ...prev, [url]: { count: entry.count + 1, lastUsed: new Date().toISOString() } }
+      window.api.settings.set('quick_access_usage', JSON.stringify(next))
+      return next
+    })
+  }
+
+  const sortedQuickAccess = [...QUICK_ACCESS].sort((a, b) => {
+    const ua = usage[a.portalUrl]
+    const ub = usage[b.portalUrl]
+    if (!ua && !ub) return 0
+    if (!ua) return 1
+    if (!ub) return -1
+    if (ub.count !== ua.count) return ub.count - ua.count
+    return ub.lastUsed.localeCompare(ua.lastUsed)
+  })
+
   const categoryColor: Record<string, string> = {
     irpf: '#60a5fa',
     iva: '#a78bfa',
@@ -103,41 +129,49 @@ export default function Dashboard() {
         <div className="kicker mb-1">Accesos rápidos</div>
         <div className="divider-gold-thin mb-4" style={{ width: '40px' }} />
         <div className="grid grid-cols-4 gap-3">
-          {QUICK_ACCESS.map((q) => (
-            <div
-              key={q.label}
-              className="card p-0"
-              style={{ borderTop: `2px solid ${q.color}` }}
-            >
-              <div style={{ padding: '0.875rem 1rem 0.625rem' }}>
-                <div style={{ fontSize: '13px', fontWeight: 600, color: 'var(--color-text-primary)', marginBottom: '2px', lineHeight: 1.3 }}>
-                  {q.label}
-                </div>
-                <div style={{ fontSize: '10px', color: 'var(--color-text-muted)', lineHeight: 1.3, minHeight: '2.2em' }}>
-                  {q.sublabel}
-                </div>
-              </div>
+          {sortedQuickAccess.map((q) => {
+            const uses = usage[q.portalUrl]?.count ?? 0
+            return (
               <div
-                className="flex gap-1"
-                style={{ padding: '0 0.625rem 0.625rem' }}
+                key={q.label}
+                className="card p-0"
+                style={{ borderTop: `2px solid ${q.color}` }}
               >
-                <button
-                  className="btn-ghost"
-                  style={{ fontSize: '10px', flex: 1, justifyContent: 'center' }}
-                  onClick={() => window.api.app.openExternal(q.portalUrl)}
+                <div style={{ padding: '0.875rem 1rem 0.625rem' }}>
+                  <div style={{ fontSize: '13px', fontWeight: 600, color: 'var(--color-text-primary)', marginBottom: '2px', lineHeight: 1.3 }}>
+                    {q.label}
+                  </div>
+                  <div style={{ fontSize: '10px', color: 'var(--color-text-muted)', lineHeight: 1.3, minHeight: '2.2em' }}>
+                    {q.sublabel}
+                  </div>
+                  {uses > 0 && (
+                    <div style={{ fontSize: '9px', color: q.color, marginTop: '4px', fontFamily: 'var(--font-mono)' }}>
+                      {uses} {uses === 1 ? 'uso' : 'usos'}
+                    </div>
+                  )}
+                </div>
+                <div
+                  className="flex gap-1"
+                  style={{ padding: '0 0.625rem 0.625rem' }}
                 >
-                  Sede →
-                </button>
-                <button
-                  className="btn-ghost"
-                  style={{ fontSize: '10px', flex: 1, justifyContent: 'center', color: 'var(--color-accent)' }}
-                  onClick={() => setCertPicker(q)}
-                >
-                  Con cert. →
-                </button>
+                  <button
+                    className="btn-ghost"
+                    style={{ fontSize: '10px', flex: 1, justifyContent: 'center' }}
+                    onClick={() => { trackUsage(q.portalUrl); window.api.app.openExternal(q.portalUrl) }}
+                  >
+                    Sede →
+                  </button>
+                  <button
+                    className="btn-ghost"
+                    style={{ fontSize: '10px', flex: 1, justifyContent: 'center', color: 'var(--color-accent)' }}
+                    onClick={() => { trackUsage(q.portalUrl); setCertPicker(q) }}
+                  >
+                    Con cert. →
+                  </button>
+                </div>
               </div>
-            </div>
-          ))}
+            )
+          })}
         </div>
       </div>
 
