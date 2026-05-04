@@ -54,6 +54,16 @@ const api = {
     getById: (id: number) => ipcRenderer.invoke('notifications:getById', id),
     updateStatus: (id: number, status: string) => ipcRenderer.invoke('notifications:updateStatus', id, status),
     delete: (id: number) => ipcRenderer.invoke('notifications:delete', id),
+    generateAlerts: () => ipcRenderer.invoke('notifications:generateAlerts'),
+  },
+  customTramites: {
+    getAll: () => ipcRenderer.invoke('custom-tramites:getAll'),
+    getByCategory: (category: string) => ipcRenderer.invoke('custom-tramites:getByCategory', category),
+    create: (data: { name: string; category: string; portal_url: string; description: string }) =>
+      ipcRenderer.invoke('custom-tramites:create', data),
+    update: (id: number, data: { name?: string; portal_url?: string; description?: string }) =>
+      ipcRenderer.invoke('custom-tramites:update', id, data),
+    delete: (id: number) => ipcRenderer.invoke('custom-tramites:delete', id),
   },
   settings: {
     get: (key: string) => ipcRenderer.invoke('settings:get', key),

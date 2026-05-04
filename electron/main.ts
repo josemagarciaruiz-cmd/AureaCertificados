@@ -7,7 +7,8 @@ import { registerClientHandlers } from './handlers/clients'
 import { registerProcedureHandlers } from './handlers/procedures'
 import { registerCalendarHandlers } from './handlers/calendar'
 import { registerSettingsHandlers } from './handlers/settings'
-import { registerNotificationHandlers } from './handlers/notifications'
+import { registerNotificationHandlers, generateAlerts } from './handlers/notifications'
+import { registerCustomTramiteHandlers } from './handlers/custom-tramites'
 
 let mainWindow: BrowserWindow | null = null
 
@@ -66,6 +67,7 @@ app.whenReady().then(() => {
   })
 
   initDatabase()
+  generateAlerts()
 
   registerCertificateHandlers()
   registerClientHandlers()
@@ -73,6 +75,7 @@ app.whenReady().then(() => {
   registerCalendarHandlers()
   registerSettingsHandlers()
   registerNotificationHandlers()
+  registerCustomTramiteHandlers()
 
   ipcMain.handle('app:getVersion', () => app.getVersion())
   ipcMain.handle('app:openExternal', (_, url: string) => shell.openExternal(url))

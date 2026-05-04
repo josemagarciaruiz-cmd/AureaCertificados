@@ -14,6 +14,14 @@ export function initDatabase(): void {
   db.pragma('journal_mode = WAL')
   db.pragma('foreign_keys = ON')
   createTables()
+  runMigrations()
+}
+
+function runMigrations(): void {
+  const notifCols = db.prepare("PRAGMA table_info(notifications)").all() as { name: string }[]
+  if (!notifCols.find((c) => c.name === 'source_key')) {
+    db.exec("ALTER TABLE notifications ADD COLUMN source_key TEXT")
+  }
 }
 
 function createTables(): void {
@@ -136,6 +144,15 @@ function createTables(): void {
       role TEXT NOT NULL DEFAULT 'user' CHECK(role IN ('admin','user')),
       password_hash TEXT,
       active INTEGER NOT NULL DEFAULT 1,
+      created_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+
+    CREATE TABLE IF NOT EXISTS custom_tramites (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      name TEXT NOT NULL,
+      category TEXT NOT NULL DEFAULT 'aeat' CHECK(category IN ('aeat','tgss')),
+      portal_url TEXT NOT NULL,
+      description TEXT NOT NULL DEFAULT '',
       created_at TEXT NOT NULL DEFAULT (datetime('now'))
     );
 

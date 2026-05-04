@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { TGSS_TRAMITES, TGSS_BLOCKS, type TgssTramite } from '@data/tgss-tramites'
 import CertPickerModal from '@components/CertPickerModal'
 import InlineUrlEdit from '@components/InlineUrlEdit'
+import CustomTramitesSection from '@components/CustomTramitesSection'
 import { useUrlOverrides } from '@hooks/useUrlOverrides'
 
 export default function TramitesTGSS() {
@@ -145,6 +146,8 @@ export default function TramitesTGSS() {
           </tbody>
         </table>
       </div>
+
+      <CustomTramitesSection category="tgss" />
 
       {certPicker && (
         <CertPickerModal

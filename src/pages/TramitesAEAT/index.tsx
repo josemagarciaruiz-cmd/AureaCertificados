@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { AEAT_MODELS, AEAT_CATEGORIES, type AeatModel } from '@data/aeat-models'
 import CertPickerModal from '@components/CertPickerModal'
 import InlineUrlEdit from '@components/InlineUrlEdit'
+import CustomTramitesSection from '@components/CustomTramitesSection'
 import { useUrlOverrides } from '@hooks/useUrlOverrides'
 
 export default function TramitesAEAT() {
@@ -156,6 +157,8 @@ export default function TramitesAEAT() {
           </tbody>
         </table>
       </div>
+
+      <CustomTramitesSection category="aeat" />
 
       {certPicker && (
         <CertPickerModal
