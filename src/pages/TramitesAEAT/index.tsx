@@ -1,13 +1,10 @@
 import { useState } from 'react'
 import { AEAT_MODELS, AEAT_CATEGORIES, type AeatModel } from '@data/aeat-models'
-import ProcedureForm from '../TramitesAEAT/ProcedureForm'
 import CertPickerModal from '@components/CertPickerModal'
 
 export default function TramitesAEAT() {
   const [search, setSearch] = useState('')
   const [activeCategory, setActiveCategory] = useState<string>('all')
-  const [selected, setSelected] = useState<AeatModel | null>(null)
-  const [showProcedure, setShowProcedure] = useState(false)
   const [certPicker, setCertPicker] = useState<AeatModel | null>(null)
 
   const filtered = AEAT_MODELS.filter((m) => {
@@ -18,10 +15,6 @@ export default function TramitesAEAT() {
     const matchCat = activeCategory === 'all' || m.category === activeCategory
     return matchSearch && matchCat
   })
-
-  const handleOpenPortal = (model: AeatModel) => {
-    window.api.app.openExternal(model.portal_url)
-  }
 
   const categoryColor: Record<string, string> = Object.fromEntries(
     AEAT_CATEGORIES.map((c) => [c.id, c.color])
@@ -45,7 +38,6 @@ export default function TramitesAEAT() {
         </button>
       </div>
 
-      {/* Filters */}
       <div className="flex flex-wrap gap-2 mb-4">
         <input
           className="field-input"
@@ -140,7 +132,7 @@ export default function TramitesAEAT() {
                     <button
                       className="btn-ghost"
                       style={{ fontSize: '11px' }}
-                      onClick={() => handleOpenPortal(m)}
+                      onClick={() => window.api.app.openExternal(m.portal_url)}
                     >
                       Sede →
                     </button>
@@ -150,13 +142,6 @@ export default function TramitesAEAT() {
                       onClick={() => setCertPicker(m)}
                     >
                       Con cert. →
-                    </button>
-                    <button
-                      className="btn-ghost"
-                      style={{ fontSize: '11px', color: 'var(--color-text-muted)' }}
-                      onClick={() => { setSelected(m); setShowProcedure(true) }}
-                    >
-                      + Trámite
                     </button>
                   </div>
                 </td>
@@ -171,16 +156,6 @@ export default function TramitesAEAT() {
           tramiteName={certPicker.name}
           portalUrl={certPicker.portal_url}
           onClose={() => setCertPicker(null)}
-        />
-      )}
-      {showProcedure && selected && (
-        <ProcedureForm
-          model={selected.model}
-          modelName={selected.name}
-          category="aeat"
-          portalUrl={selected.portal_url}
-          onClose={() => setShowProcedure(false)}
-          onSaved={() => setShowProcedure(false)}
         />
       )}
     </div>

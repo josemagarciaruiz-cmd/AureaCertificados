@@ -101,6 +101,10 @@ export default function Certificates() {
         </div>
       </div>
 
+      <p style={{ fontSize: '12px', color: 'var(--color-text-muted)', marginBottom: '0.75rem' }}>
+        Marca varios certificados con las casillas de la izquierda para acceder al mismo portal con todos ellos a la vez.
+      </p>
+
       <div className="flex items-center gap-4 mb-5">
         <input
           className="field-input"
