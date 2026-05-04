@@ -1,11 +1,14 @@
 import { useState } from 'react'
 import { AEAT_MODELS, AEAT_CATEGORIES, type AeatModel } from '@data/aeat-models'
 import CertPickerModal from '@components/CertPickerModal'
+import InlineUrlEdit from '@components/InlineUrlEdit'
+import { useUrlOverrides } from '@hooks/useUrlOverrides'
 
 export default function TramitesAEAT() {
   const [search, setSearch] = useState('')
   const [activeCategory, setActiveCategory] = useState<string>('all')
   const [certPicker, setCertPicker] = useState<AeatModel | null>(null)
+  const { get: getUrl, isOverridden, save: saveUrl, reset: resetUrl } = useUrlOverrides('aeat_url_overrides')
 
   const filtered = AEAT_MODELS.filter((m) => {
     const matchSearch =
@@ -87,66 +90,69 @@ export default function TramitesAEAT() {
                 </td>
               </tr>
             )}
-            {filtered.map((m) => (
-              <tr key={m.model}>
-                <td>
-                  <span
-                    style={{
-                      fontFamily: 'var(--font-mono)',
-                      fontSize: '13px',
-                      fontWeight: 700,
-                      color: 'var(--color-accent)',
-                    }}
-                  >
-                    {m.model}
-                  </span>
-                  {m.notes && (
-                    <div style={{ fontSize: '10px', color: 'var(--color-warning)', fontFamily: 'var(--font-mono)', marginTop: '2px' }}>
-                      ⚠ {m.notes}
+            {filtered.map((m) => {
+              const url = getUrl(m.model, m.portal_url)
+              return (
+                <tr key={m.model}>
+                  <td>
+                    <span style={{ fontFamily: 'var(--font-mono)', fontSize: '13px', fontWeight: 700, color: 'var(--color-accent)' }}>
+                      {m.model}
+                    </span>
+                    {m.notes && (
+                      <div style={{ fontSize: '10px', color: 'var(--color-warning)', fontFamily: 'var(--font-mono)', marginTop: '2px' }}>
+                        ⚠ {m.notes}
+                      </div>
+                    )}
+                  </td>
+                  <td style={{ color: 'var(--color-text-primary)', fontWeight: 500, fontSize: '13px', maxWidth: '240px' }}>
+                    {m.name}
+                  </td>
+                  <td>
+                    <span
+                      className="badge"
+                      style={{
+                        color: categoryColor[m.category] || 'var(--color-text-muted)',
+                        borderColor: `${categoryColor[m.category] || ''}40`,
+                        background: `${categoryColor[m.category] || ''}10`,
+                      }}
+                    >
+                      {m.category}
+                    </span>
+                  </td>
+                  <td>
+                    <span className="badge badge-pending">{m.periodicity}</span>
+                  </td>
+                  <td style={{ fontSize: '12px', color: 'var(--color-text-muted)', maxWidth: '300px' }}>
+                    {m.description}
+                  </td>
+                  <td>
+                    <div className="flex items-center gap-1">
+                      <button
+                        className="btn-ghost"
+                        style={{ fontSize: '11px' }}
+                        onClick={() => window.api.app.openExternal(url)}
+                      >
+                        Sede →
+                      </button>
+                      <button
+                        className="btn-ghost"
+                        style={{ fontSize: '11px', color: 'var(--color-accent)' }}
+                        onClick={() => setCertPicker(m)}
+                      >
+                        Con cert. →
+                      </button>
+                      <InlineUrlEdit
+                        id={m.model}
+                        defaultUrl={url}
+                        isOverridden={isOverridden(m.model)}
+                        onSave={saveUrl}
+                        onReset={resetUrl}
+                      />
                     </div>
-                  )}
-                </td>
-                <td style={{ color: 'var(--color-text-primary)', fontWeight: 500, fontSize: '13px', maxWidth: '240px' }}>
-                  {m.name}
-                </td>
-                <td>
-                  <span
-                    className="badge"
-                    style={{
-                      color: categoryColor[m.category] || 'var(--color-text-muted)',
-                      borderColor: `${categoryColor[m.category] || ''}40`,
-                      background: `${categoryColor[m.category] || ''}10`,
-                    }}
-                  >
-                    {m.category}
-                  </span>
-                </td>
-                <td>
-                  <span className="badge badge-pending">{m.periodicity}</span>
-                </td>
-                <td style={{ fontSize: '12px', color: 'var(--color-text-muted)', maxWidth: '300px' }}>
-                  {m.description}
-                </td>
-                <td>
-                  <div className="flex gap-1">
-                    <button
-                      className="btn-ghost"
-                      style={{ fontSize: '11px' }}
-                      onClick={() => window.api.app.openExternal(m.portal_url)}
-                    >
-                      Sede →
-                    </button>
-                    <button
-                      className="btn-ghost"
-                      style={{ fontSize: '11px', color: 'var(--color-accent)' }}
-                      onClick={() => setCertPicker(m)}
-                    >
-                      Con cert. →
-                    </button>
-                  </div>
-                </td>
-              </tr>
-            ))}
+                  </td>
+                </tr>
+              )
+            })}
           </tbody>
         </table>
       </div>
@@ -154,7 +160,7 @@ export default function TramitesAEAT() {
       {certPicker && (
         <CertPickerModal
           tramiteName={certPicker.name}
-          portalUrl={certPicker.portal_url}
+          portalUrl={getUrl(certPicker.model, certPicker.portal_url)}
           onClose={() => setCertPicker(null)}
         />
       )}

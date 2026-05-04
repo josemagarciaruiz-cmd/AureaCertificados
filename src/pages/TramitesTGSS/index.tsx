@@ -1,11 +1,14 @@
 import { useState } from 'react'
 import { TGSS_TRAMITES, TGSS_BLOCKS, type TgssTramite } from '@data/tgss-tramites'
 import CertPickerModal from '@components/CertPickerModal'
+import InlineUrlEdit from '@components/InlineUrlEdit'
+import { useUrlOverrides } from '@hooks/useUrlOverrides'
 
 export default function TramitesTGSS() {
   const [search, setSearch] = useState('')
   const [activeBlock, setActiveBlock] = useState<string>('all')
   const [certPicker, setCertPicker] = useState<TgssTramite | null>(null)
+  const { get: getUrl, isOverridden, save: saveUrl, reset: resetUrl } = useUrlOverrides('tgss_url_overrides')
 
   const filtered = TGSS_TRAMITES.filter((t) => {
     const matchSearch =
@@ -80,55 +83,65 @@ export default function TramitesTGSS() {
                 </td>
               </tr>
             )}
-            {filtered.map((t) => (
-              <tr key={t.id}>
-                <td style={{ color: 'var(--color-text-primary)', fontWeight: 500, fontSize: '13px', maxWidth: '220px' }}>
-                  {t.name}
-                  {t.notes && (
-                    <div style={{ fontSize: '10px', color: 'var(--color-warning)', fontFamily: 'var(--font-mono)', marginTop: '2px' }}>
-                      ⚠ {t.notes}
+            {filtered.map((t) => {
+              const url = getUrl(t.id, t.portal_url)
+              return (
+                <tr key={t.id}>
+                  <td style={{ color: 'var(--color-text-primary)', fontWeight: 500, fontSize: '13px', maxWidth: '220px' }}>
+                    {t.name}
+                    {t.notes && (
+                      <div style={{ fontSize: '10px', color: 'var(--color-warning)', fontFamily: 'var(--font-mono)', marginTop: '2px' }}>
+                        ⚠ {t.notes}
+                      </div>
+                    )}
+                  </td>
+                  <td>
+                    <span
+                      className="badge"
+                      style={{
+                        color: blockColor[t.category] || 'var(--color-text-muted)',
+                        borderColor: `${blockColor[t.category] || ''}40`,
+                        background: `${blockColor[t.category] || ''}10`,
+                        fontSize: '10px',
+                      }}
+                    >
+                      {t.block}
+                    </span>
+                  </td>
+                  <td style={{ fontSize: '11px', color: 'var(--color-text-muted)', fontFamily: 'var(--font-mono)' }}>
+                    {t.system}
+                  </td>
+                  <td style={{ fontSize: '12px', color: 'var(--color-text-muted)', maxWidth: '300px' }}>
+                    {t.description}
+                  </td>
+                  <td>
+                    <div className="flex items-center gap-1">
+                      <button
+                        className="btn-ghost"
+                        style={{ fontSize: '11px' }}
+                        onClick={() => window.api.app.openExternal(url)}
+                      >
+                        Sede →
+                      </button>
+                      <button
+                        className="btn-ghost"
+                        style={{ fontSize: '11px', color: 'var(--color-accent)' }}
+                        onClick={() => setCertPicker(t)}
+                      >
+                        Con cert. →
+                      </button>
+                      <InlineUrlEdit
+                        id={t.id}
+                        defaultUrl={url}
+                        isOverridden={isOverridden(t.id)}
+                        onSave={saveUrl}
+                        onReset={resetUrl}
+                      />
                     </div>
-                  )}
-                </td>
-                <td>
-                  <span
-                    className="badge"
-                    style={{
-                      color: blockColor[t.category] || 'var(--color-text-muted)',
-                      borderColor: `${blockColor[t.category] || ''}40`,
-                      background: `${blockColor[t.category] || ''}10`,
-                      fontSize: '10px',
-                    }}
-                  >
-                    {t.block}
-                  </span>
-                </td>
-                <td style={{ fontSize: '11px', color: 'var(--color-text-muted)', fontFamily: 'var(--font-mono)' }}>
-                  {t.system}
-                </td>
-                <td style={{ fontSize: '12px', color: 'var(--color-text-muted)', maxWidth: '300px' }}>
-                  {t.description}
-                </td>
-                <td>
-                  <div className="flex gap-1">
-                    <button
-                      className="btn-ghost"
-                      style={{ fontSize: '11px' }}
-                      onClick={() => window.api.app.openExternal(t.portal_url)}
-                    >
-                      Sede →
-                    </button>
-                    <button
-                      className="btn-ghost"
-                      style={{ fontSize: '11px', color: 'var(--color-accent)' }}
-                      onClick={() => setCertPicker(t)}
-                    >
-                      Con cert. →
-                    </button>
-                  </div>
-                </td>
-              </tr>
-            ))}
+                  </td>
+                </tr>
+              )
+            })}
           </tbody>
         </table>
       </div>
@@ -136,7 +149,7 @@ export default function TramitesTGSS() {
       {certPicker && (
         <CertPickerModal
           tramiteName={certPicker.name}
-          portalUrl={certPicker.portal_url}
+          portalUrl={getUrl(certPicker.id, certPicker.portal_url)}
           onClose={() => setCertPicker(null)}
         />
       )}
