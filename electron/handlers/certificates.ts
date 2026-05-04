@@ -3,7 +3,7 @@ import { getDb } from './database'
 import * as forge from 'node-forge'
 import * as crypto from 'crypto'
 import { readFileSync, writeFileSync, unlinkSync } from 'fs'
-import { tmpdir } from 'os'
+import { tmpdir, homedir } from 'os'
 import { join } from 'path'
 import { execSync } from 'child_process'
 
@@ -241,12 +241,13 @@ export function registerCertificateHandlers(): void {
         } catch { /* ignore */ }
       } else if (process.platform === 'darwin' && dbCert.fingerprint) {
         const sha1 = dbCert.fingerprint.replace(/:/g, '')
+        const keychainPath = `${homedir()}/Library/Keychains/login.keychain-db`
         try {
           execSync(
-            `security delete-certificate -Z '${sha1}' ~/Library/Keychains/login.keychain-db 2>/dev/null || true`,
+            `security delete-certificate -Z '${sha1}' '${keychainPath}'`,
             { timeout: 10000 }
           )
-        } catch { /* ignore */ }
+        } catch { /* ignore if cert already removed */ }
       }
     }
 
@@ -259,10 +260,13 @@ export function registerCertificateHandlers(): void {
         )
         winThumbprint = psOut.trim()
       } else if (process.platform === 'darwin') {
-        execSync(
-          `security import '${tempPath}' -k ~/Library/Keychains/login.keychain-db -P '${tempPass}' -A 2>/dev/null || true`,
-          { encoding: 'utf8', timeout: 30000 }
-        )
+        const keychainPath = `${homedir()}/Library/Keychains/login.keychain-db`
+        try {
+          execSync(
+            `security import '${tempPath}' -k '${keychainPath}' -P '${tempPass}' -A -T ''`,
+            { encoding: 'utf8', timeout: 30000 }
+          )
+        } catch { /* may warn but cert is imported */ }
       }
 
       // 4. Open browser window — select-client-certificate will fire with our cert in the list
