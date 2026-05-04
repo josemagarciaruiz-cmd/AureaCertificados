@@ -1,12 +1,14 @@
 import { useState } from 'react'
 import { TGSS_TRAMITES, TGSS_BLOCKS, type TgssTramite } from '@data/tgss-tramites'
 import ProcedureForm from '../TramitesAEAT/ProcedureForm'
+import CertPickerModal from '@components/CertPickerModal'
 
 export default function TramitesTGSS() {
   const [search, setSearch] = useState('')
   const [activeBlock, setActiveBlock] = useState<string>('all')
   const [selected, setSelected] = useState<TgssTramite | null>(null)
   const [showProcedure, setShowProcedure] = useState(false)
+  const [certPicker, setCertPicker] = useState<TgssTramite | null>(null)
 
   const filtered = TGSS_TRAMITES.filter((t) => {
     const matchSearch =
@@ -122,6 +124,13 @@ export default function TramitesTGSS() {
                     <button
                       className="btn-ghost"
                       style={{ fontSize: '11px', color: 'var(--color-accent)' }}
+                      onClick={() => setCertPicker(t)}
+                    >
+                      Con cert. →
+                    </button>
+                    <button
+                      className="btn-ghost"
+                      style={{ fontSize: '11px', color: 'var(--color-text-muted)' }}
                       onClick={() => { setSelected(t); setShowProcedure(true) }}
                     >
                       + Trámite
@@ -134,6 +143,13 @@ export default function TramitesTGSS() {
         </table>
       </div>
 
+      {certPicker && (
+        <CertPickerModal
+          tramiteName={certPicker.name}
+          portalUrl={certPicker.portal_url}
+          onClose={() => setCertPicker(null)}
+        />
+      )}
       {showProcedure && selected && (
         <ProcedureForm
           modelName={selected.name}

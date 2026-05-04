@@ -1,12 +1,14 @@
 import { useState } from 'react'
 import { AEAT_MODELS, AEAT_CATEGORIES, type AeatModel } from '@data/aeat-models'
 import ProcedureForm from '../TramitesAEAT/ProcedureForm'
+import CertPickerModal from '@components/CertPickerModal'
 
 export default function TramitesAEAT() {
   const [search, setSearch] = useState('')
   const [activeCategory, setActiveCategory] = useState<string>('all')
   const [selected, setSelected] = useState<AeatModel | null>(null)
   const [showProcedure, setShowProcedure] = useState(false)
+  const [certPicker, setCertPicker] = useState<AeatModel | null>(null)
 
   const filtered = AEAT_MODELS.filter((m) => {
     const matchSearch =
@@ -145,6 +147,13 @@ export default function TramitesAEAT() {
                     <button
                       className="btn-ghost"
                       style={{ fontSize: '11px', color: 'var(--color-accent)' }}
+                      onClick={() => setCertPicker(m)}
+                    >
+                      Con cert. →
+                    </button>
+                    <button
+                      className="btn-ghost"
+                      style={{ fontSize: '11px', color: 'var(--color-text-muted)' }}
                       onClick={() => { setSelected(m); setShowProcedure(true) }}
                     >
                       + Trámite
@@ -157,6 +166,13 @@ export default function TramitesAEAT() {
         </table>
       </div>
 
+      {certPicker && (
+        <CertPickerModal
+          tramiteName={certPicker.name}
+          portalUrl={certPicker.portal_url}
+          onClose={() => setCertPicker(null)}
+        />
+      )}
       {showProcedure && selected && (
         <ProcedureForm
           model={selected.model}
