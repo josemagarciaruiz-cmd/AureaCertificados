@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { HashRouter, Routes, Route, Navigate } from 'react-router-dom'
 import Layout from '@components/layout/Layout'
 import LockScreen from '@components/LockScreen'
+import { CertPickerProvider } from '@contexts/CertPickerContext'
 import Dashboard from '@pages/Dashboard'
 import Clients from '@pages/Clients'
 import Certificates from '@pages/Certificates'
@@ -46,6 +47,7 @@ export default function App() {
 
   return (
     <HashRouter future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
+      <CertPickerProvider>
       <Layout onLock={() => setLocked(true)}>
         <Routes>
           <Route path="/" element={<Navigate to="/dashboard" replace />} />
@@ -59,6 +61,7 @@ export default function App() {
           <Route path="/settings" element={<Settings />} />
         </Routes>
       </Layout>
+      </CertPickerProvider>
     </HashRouter>
   )
 }

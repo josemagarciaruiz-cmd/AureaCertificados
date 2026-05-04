@@ -15,7 +15,8 @@
       "@store/*": ["src/store/*"],
       "@hooks/*": ["src/hooks/*"],
       "@lib/*": ["src/lib/*"],
-      "@data/*": ["src/data/*"]
+      "@data/*": ["src/data/*"],
+      "@contexts/*": ["src/contexts/*"]
     }
   },
   "include": ["src"]

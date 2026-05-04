@@ -4,7 +4,7 @@ import { format, differenceInDays, parseISO } from 'date-fns'
 import { es } from 'date-fns/locale'
 import { AEAT_MODELS } from '@data/aeat-models'
 import { TGSS_TRAMITES } from '@data/tgss-tramites'
-import CertPickerModal from '@components/CertPickerModal'
+import { useCertPicker } from '@contexts/CertPickerContext'
 
 interface UpcomingDeadline {
   id: number
@@ -27,6 +27,8 @@ interface QuickAccess {
   color: string
   portalUrl: string
 }
+
+type UsageMap = Record<string, { count: number; lastUsed: string }>
 
 const aeat = (model: string): QuickAccess | null => {
   const m = AEAT_MODELS.find((x) => x.model === model)
@@ -53,27 +55,28 @@ const QUICK_ACCESS: QuickAccess[] = [
   { label: 'IMPORTASS', sublabel: 'Portal autónomos Seg. Social', color: '#34d399', portalUrl: 'https://portal.seg-social.gob.es/wps/portal/importass/importass' },
 ].filter(Boolean)
 
-type UsageMap = Record<string, { count: number; lastUsed: string }>
-
 export default function Dashboard() {
   const navigate = useNavigate()
+  const { openCertPicker } = useCertPicker()
   const [deadlines, setDeadlines] = useState<UpcomingDeadline[]>([])
   const [expiringCerts, setExpiringCerts] = useState<ExpiringCert[]>([])
   const [stats, setStats] = useState({ clients: 0, certs: 0, notifications: 0 })
-  const [certPicker, setCertPicker] = useState<QuickAccess | null>(null)
   const [usage, setUsage] = useState<UsageMap>({})
+  const [urlOverrides, setUrlOverrides] = useState<Record<string, string>>({})
+  const [editingLabel, setEditingLabel] = useState<string | null>(null)
+  const [editingValue, setEditingValue] = useState('')
 
   useEffect(() => {
-    window.api.settings.get('quick_access_usage').then((val) => {
-      if (val) setUsage(JSON.parse(val as string) as UsageMap)
-    })
-
     Promise.all([
+      window.api.settings.get('quick_access_usage'),
+      window.api.settings.get('quick_access_url_overrides'),
       window.api.calendar.getUpcoming(30),
       window.api.clients.getAll(),
       window.api.certificates.getAll(),
       window.api.notifications.getAll(),
-    ]).then(([dl, clients, certs, notifs]) => {
+    ]).then(([usageVal, overridesVal, dl, clients, certs, notifs]) => {
+      if (usageVal) setUsage(JSON.parse(usageVal as string) as UsageMap)
+      if (overridesVal) setUrlOverrides(JSON.parse(overridesVal as string) as Record<string, string>)
       setDeadlines((dl as UpcomingDeadline[]).slice(0, 8))
       const today = new Date()
       const expiring = (certs as ExpiringCert[]).filter((c) => {
@@ -99,6 +102,25 @@ export default function Dashboard() {
     })
   }
 
+  const saveUrlOverride = (label: string, url: string) => {
+    setUrlOverrides((prev) => {
+      const next = { ...prev, [label]: url }
+      window.api.settings.set('quick_access_url_overrides', JSON.stringify(next))
+      return next
+    })
+    setEditingLabel(null)
+  }
+
+  const resetUrlOverride = (label: string) => {
+    setUrlOverrides((prev) => {
+      const next = { ...prev }
+      delete next[label]
+      window.api.settings.set('quick_access_url_overrides', JSON.stringify(next))
+      return next
+    })
+    setEditingLabel(null)
+  }
+
   const sortedQuickAccess = [...QUICK_ACCESS].sort((a, b) => {
     const ua = usage[a.portalUrl]
     const ub = usage[b.portalUrl]
@@ -110,12 +132,8 @@ export default function Dashboard() {
   })
 
   const categoryColor: Record<string, string> = {
-    irpf: '#60a5fa',
-    iva: '#a78bfa',
-    sociedades: '#fb923c',
-    retenciones: '#34d399',
-    informativas: '#f472b6',
-    ss: '#facc15',
+    irpf: '#60a5fa', iva: '#a78bfa', sociedades: '#fb923c',
+    retenciones: '#34d399', informativas: '#f472b6', ss: '#facc15',
     otros: 'var(--color-text-muted)',
   }
 
@@ -130,45 +148,91 @@ export default function Dashboard() {
         <div className="divider-gold-thin mb-4" style={{ width: '40px' }} />
         <div className="grid grid-cols-4 gap-3">
           {sortedQuickAccess.map((q) => {
+            const effectiveUrl = urlOverrides[q.label] ?? q.portalUrl
             const uses = usage[q.portalUrl]?.count ?? 0
+            const isEditing = editingLabel === q.label
+            const isOverridden = !!urlOverrides[q.label]
+
             return (
-              <div
-                key={q.label}
-                className="card p-0"
-                style={{ borderTop: `2px solid ${q.color}` }}
-              >
-                <div style={{ padding: '0.875rem 1rem 0.625rem' }}>
-                  <div style={{ fontSize: '13px', fontWeight: 600, color: 'var(--color-text-primary)', marginBottom: '2px', lineHeight: 1.3 }}>
-                    {q.label}
+              <div key={q.label} className="card p-0" style={{ borderTop: `2px solid ${q.color}` }}>
+                <div style={{ padding: '0.75rem 0.75rem 0.5rem' }}>
+                  <div className="flex items-start justify-between gap-1">
+                    <div style={{ minWidth: 0 }}>
+                      <div style={{ fontSize: '12px', fontWeight: 600, color: 'var(--color-text-primary)', lineHeight: 1.3 }}>
+                        {q.label}
+                      </div>
+                      <div style={{ fontSize: '10px', color: 'var(--color-text-muted)', lineHeight: 1.3 }}>
+                        {q.sublabel}
+                      </div>
+                      {uses > 0 && (
+                        <div style={{ fontSize: '9px', color: q.color, marginTop: '2px', fontFamily: 'var(--font-mono)' }}>
+                          {uses} {uses === 1 ? 'uso' : 'usos'}
+                        </div>
+                      )}
+                    </div>
+                    <button
+                      title="Editar URL"
+                      style={{
+                        fontSize: '10px', color: isOverridden ? q.color : 'var(--color-text-muted)',
+                        background: 'none', border: 'none', cursor: 'pointer', padding: '0 2px', flexShrink: 0,
+                      }}
+                      onClick={() => { setEditingLabel(q.label); setEditingValue(effectiveUrl) }}
+                    >
+                      ✎
+                    </button>
                   </div>
-                  <div style={{ fontSize: '10px', color: 'var(--color-text-muted)', lineHeight: 1.3, minHeight: '2.2em' }}>
-                    {q.sublabel}
-                  </div>
-                  {uses > 0 && (
-                    <div style={{ fontSize: '9px', color: q.color, marginTop: '4px', fontFamily: 'var(--font-mono)' }}>
-                      {uses} {uses === 1 ? 'uso' : 'usos'}
+
+                  {isEditing && (
+                    <div style={{ marginTop: '0.5rem' }}>
+                      <input
+                        className="field-input"
+                        value={editingValue}
+                        onChange={(e) => setEditingValue(e.target.value)}
+                        style={{ fontSize: '10px', fontFamily: 'var(--font-mono)', marginBottom: '0.35rem' }}
+                        autoFocus
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter') saveUrlOverride(q.label, editingValue)
+                          if (e.key === 'Escape') setEditingLabel(null)
+                        }}
+                      />
+                      <div className="flex gap-1">
+                        <button className="btn-primary" style={{ fontSize: '9px', padding: '2px 6px' }}
+                          onClick={() => saveUrlOverride(q.label, editingValue)}>
+                          Guardar
+                        </button>
+                        {isOverridden && (
+                          <button className="btn-ghost" style={{ fontSize: '9px', padding: '2px 6px', color: 'var(--color-danger)' }}
+                            onClick={() => resetUrlOverride(q.label)}>
+                            Restablecer
+                          </button>
+                        )}
+                        <button className="btn-ghost" style={{ fontSize: '9px', padding: '2px 6px' }}
+                          onClick={() => setEditingLabel(null)}>
+                          Cancelar
+                        </button>
+                      </div>
                     </div>
                   )}
                 </div>
-                <div
-                  className="flex gap-1"
-                  style={{ padding: '0 0.625rem 0.625rem' }}
-                >
-                  <button
-                    className="btn-ghost"
-                    style={{ fontSize: '10px', flex: 1, justifyContent: 'center' }}
-                    onClick={() => { trackUsage(q.portalUrl); window.api.app.openExternal(q.portalUrl) }}
-                  >
-                    Sede →
-                  </button>
-                  <button
-                    className="btn-ghost"
-                    style={{ fontSize: '10px', flex: 1, justifyContent: 'center', color: 'var(--color-accent)' }}
-                    onClick={() => { trackUsage(q.portalUrl); setCertPicker(q) }}
-                  >
-                    Con cert. →
-                  </button>
-                </div>
+
+                {!isEditing && (
+                  <div className="flex gap-1" style={{ padding: '0 0.5rem 0.5rem' }}>
+                    <button
+                      className="btn-ghost"
+                      style={{ fontSize: '10px', flex: 1, justifyContent: 'center' }}
+                      onClick={() => { trackUsage(q.portalUrl); window.api.app.openExternal(effectiveUrl) }}
+                    >
+                      Sede →
+                    </button>
+                    <button
+                      className="btn-ghost"
+                      style={{ fontSize: '10px', flex: 1, justifyContent: 'center', color: 'var(--color-accent)' }}
+                      onClick={() => { trackUsage(q.portalUrl); openCertPicker(q.label, effectiveUrl) }}
+                    >
+                      Con cert. →
+                    </button>
+                  </div>
+                )}
               </div>
             )
           })}
@@ -182,16 +246,9 @@ export default function Dashboard() {
           { label: 'Certificados', value: stats.certs, path: '/certificates' },
           { label: 'Notificaciones nuevas', value: stats.notifications, path: '/notifications' },
         ].map((s) => (
-          <div
-            key={s.label}
-            className="card card-accent p-5 interactive"
-            onClick={() => navigate(s.path)}
-          >
+          <div key={s.label} className="card card-accent p-5 interactive" onClick={() => navigate(s.path)}>
             <div className="kicker mb-3">{s.label}</div>
-            <div
-              className="font-serif font-bold text-4xl"
-              style={{ color: 'var(--color-text-primary)', letterSpacing: '-0.02em' }}
-            >
+            <div className="font-serif font-bold text-4xl" style={{ color: 'var(--color-text-primary)', letterSpacing: '-0.02em' }}>
               {s.value}
             </div>
           </div>
@@ -208,9 +265,7 @@ export default function Dashboard() {
                 Calendario fiscal
               </div>
             </div>
-            <button className="btn-ghost text-xs" onClick={() => navigate('/calendar')}>
-              Ver todo →
-            </button>
+            <button className="btn-ghost text-xs" onClick={() => navigate('/calendar')}>Ver todo →</button>
           </div>
           <div className="divide-y" style={{ borderColor: 'var(--color-border)' }}>
             {deadlines.length === 0 && (
@@ -223,10 +278,7 @@ export default function Dashboard() {
               return (
                 <div key={d.id} className="flex items-center justify-between px-5 py-3">
                   <div className="flex items-center gap-3">
-                    <div
-                      className="w-1 h-8 flex-shrink-0"
-                      style={{ background: categoryColor[d.category] ?? 'var(--color-text-muted)' }}
-                    />
+                    <div className="w-1 h-8 flex-shrink-0" style={{ background: categoryColor[d.category] ?? 'var(--color-text-muted)' }} />
                     <div>
                       <div style={{ fontSize: '13px', color: 'var(--color-text-primary)', fontWeight: 500 }}>
                         {d.model_number && (
@@ -242,13 +294,9 @@ export default function Dashboard() {
                     </div>
                   </div>
                   <div>
-                    {days <= 7 ? (
-                      <span className="badge badge-critical">{days}d</span>
-                    ) : days <= 15 ? (
-                      <span className="badge badge-warning">{days}d</span>
-                    ) : (
-                      <span className="badge badge-pending">{days}d</span>
-                    )}
+                    {days <= 7 ? <span className="badge badge-critical">{days}d</span>
+                      : days <= 15 ? <span className="badge badge-warning">{days}d</span>
+                      : <span className="badge badge-pending">{days}d</span>}
                   </div>
                 </div>
               )
@@ -260,9 +308,7 @@ export default function Dashboard() {
         <div className="card p-0">
           <div className="px-4 py-3 border-b" style={{ borderColor: 'var(--color-border)' }}>
             <div className="kicker" style={{ fontSize: '9px' }}>Alerta</div>
-            <div className="font-serif font-bold" style={{ color: 'var(--color-text-primary)', fontSize: '15px' }}>
-              Certificados
-            </div>
+            <div className="font-serif font-bold" style={{ color: 'var(--color-text-primary)', fontSize: '15px' }}>Certificados</div>
           </div>
           <div>
             {expiringCerts.length === 0 ? (
@@ -278,9 +324,7 @@ export default function Dashboard() {
                       <div style={{ fontSize: '12px', color: 'var(--color-text-primary)', fontWeight: 500 }}>{c.alias}</div>
                       <div style={{ fontSize: '11px', color: 'var(--color-text-muted)' }}>{c.client_name}</div>
                     </div>
-                    <span className={`badge ${days <= 15 ? 'badge-critical' : 'badge-warning'}`}>
-                      {days}d
-                    </span>
+                    <span className={`badge ${days <= 15 ? 'badge-critical' : 'badge-warning'}`}>{days}d</span>
                   </div>
                 )
               })
@@ -288,14 +332,6 @@ export default function Dashboard() {
           </div>
         </div>
       </div>
-
-      {certPicker && (
-        <CertPickerModal
-          tramiteName={certPicker.label}
-          portalUrl={certPicker.portalUrl}
-          onClose={() => setCertPicker(null)}
-        />
-      )}
     </div>
   )
 }

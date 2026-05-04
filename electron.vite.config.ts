@@ -43,6 +43,7 @@ export default defineConfig({
         '@hooks': resolve('src/hooks'),
         '@lib': resolve('src/lib'),
         '@data': resolve('src/data'),
+        '@contexts': resolve('src/contexts'),
       }
     },
     plugins: [react()],

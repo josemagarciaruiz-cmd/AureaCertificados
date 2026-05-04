@@ -1,4 +1,5 @@
 import { NavLink } from 'react-router-dom'
+import { useCertPicker } from '@contexts/CertPickerContext'
 
 const nav = [
   {
@@ -27,6 +28,8 @@ const nav = [
 ]
 
 export default function Sidebar() {
+  const { openCertPicker } = useCertPicker()
+
   return (
     <aside
       className="w-56 flex-shrink-0 flex flex-col border-r"
@@ -89,7 +92,7 @@ export default function Sidebar() {
                 style={{ color: 'var(--color-text-secondary)', background: 'transparent', textAlign: 'left' }}
                 onMouseEnter={(e) => (e.currentTarget.style.color = 'var(--color-text-primary)')}
                 onMouseLeave={(e) => (e.currentTarget.style.color = 'var(--color-text-secondary)')}
-                onClick={() => window.api.app.openExternal('https://dehu.redsara.es/')}
+                onClick={() => openCertPicker('DEHU — Notificaciones electrónicas', 'https://dehu.redsara.es/')}
               >
                 <IconDEHU size={16} />
                 <span style={{ fontSize: '13px', fontWeight: 500 }}>DEHU</span>
