@@ -269,6 +269,9 @@ export function registerCertificateHandlers(): void {
         } catch { /* may warn but cert is imported */ }
       }
 
+      // Small delay so the OS cert store change is visible to Chromium
+      await new Promise<void>((r) => setTimeout(r, 400))
+
       // 4. Open browser window — select-client-certificate will fire with our cert in the list
       const win = new BrowserWindow({
         width: 1280,
