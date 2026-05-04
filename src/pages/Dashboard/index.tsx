@@ -46,9 +46,11 @@ const QUICK_ACCESS: QuickAccess[] = [
   tgss('idc-reta')!,
   tgss('alta-reta')!,
   tgss('baja-reta')!,
+  tgss('cambio-base-reta')!,
   aeat('111')!,
   aeat('190')!,
   { label: 'DEHU', sublabel: 'Notificaciones electrónicas', color: '#06b6d4', portalUrl: 'https://dehu.redsara.es/' },
+  { label: 'IMPORTASS', sublabel: 'Portal autónomos Seg. Social', color: '#34d399', portalUrl: 'https://portal.seg-social.gob.es/wps/portal/importass/importass' },
 ].filter(Boolean)
 
 export default function Dashboard() {
