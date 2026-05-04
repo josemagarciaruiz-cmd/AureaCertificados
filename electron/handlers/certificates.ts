@@ -2,7 +2,7 @@ import { ipcMain, BrowserWindow } from 'electron'
 import { getDb } from './database'
 import * as forge from 'node-forge'
 import * as crypto from 'crypto'
-import { readFileSync, unlinkSync } from 'fs'
+import { readFileSync, writeFileSync, unlinkSync } from 'fs'
 import { tmpdir } from 'os'
 import { join } from 'path'
 import { execSync } from 'child_process'
@@ -76,6 +76,27 @@ function parseP12Info(p12Buffer: Buffer, password: string): Record<string, strin
   }
 }
 
+function repackageP12(buffer: Buffer, originalPassword: string, newPassword: string): Buffer {
+  const p12Der = forge.util.createBuffer(buffer.toString('binary'))
+  const p12Asn1 = forge.asn1.fromDer(p12Der)
+  const p12 = forge.pkcs12.pkcs12FromAsn1(p12Asn1, originalPassword)
+
+  const keyBags = p12.getBags({ bagType: forge.pki.oids.pkcs8ShroudedKeyBag })
+  const certBags = p12.getBags({ bagType: forge.pki.oids.certBag })
+  const keyBag = keyBags[forge.pki.oids.pkcs8ShroudedKeyBag]?.[0]
+  const certs = (certBags[forge.pki.oids.certBag] ?? [])
+    .map((b) => b.cert)
+    .filter((c): c is forge.pki.Certificate => !!c)
+
+  if (!keyBag?.key) throw new Error('No se encontró la clave privada en el P12')
+
+  const newP12Asn1 = forge.pkcs12.toPkcs12Asn1(keyBag.key, certs, newPassword, {
+    algorithm: '3des',
+    friendlyName: certs[0]?.subject.getField('CN')?.value ?? undefined,
+  })
+  return Buffer.from(forge.asn1.toDer(newP12Asn1).getBytes(), 'binary')
+}
+
 export function registerCertificateHandlers(): void {
   ipcMain.handle('certificates:parseP12', (_, filePath: string, password: string) => {
     const buffer = readFileSync(filePath)
@@ -106,7 +127,9 @@ export function registerCertificateHandlers(): void {
   }) => {
     const buffer = readFileSync(data.filePath)
     const info = parseP12Info(buffer, data.password)
-    const { encrypted, iv, salt } = encryptP12(buffer, data.masterPassword)
+    // Re-package so the inner P12 password equals masterPassword — required for OS store install later
+    const repackaged = repackageP12(buffer, data.password, data.masterPassword)
+    const { encrypted, iv, salt } = encryptP12(repackaged, data.masterPassword)
 
     const result = getDb().prepare(`
       INSERT INTO certificates
@@ -175,6 +198,103 @@ export function registerCertificateHandlers(): void {
     if (win) win.webContents.executeJavaScript(`window.open('${url}', '_blank')`)
 
     return { success: true }
+  })
+
+  ipcMain.handle('certificates:openPortalWithCert', async (_, data: {
+    certId: number
+    url: string
+    masterPassword: string
+  }) => {
+    const dbCert = getDb().prepare(`
+      SELECT cert.*, c.name as client_name FROM certificates cert
+      LEFT JOIN clients c ON c.id = cert.client_id
+      WHERE cert.id = ?
+    `).get(data.certId) as Record<string, string> | undefined
+
+    if (!dbCert) throw new Error('Certificado no encontrado')
+
+    // 1. Decrypt stored P12 (inner password = masterPassword for re-packaged certs)
+    const p12Buffer = decryptP12(dbCert.encrypted_p12, dbCert.iv, dbCert.salt, data.masterPassword)
+
+    // 2. Re-package with a random temp password for OS store install
+    const tempPass = crypto.randomBytes(16).toString('hex')
+    let tempP12: Buffer
+    try {
+      tempP12 = repackageP12(p12Buffer, data.masterPassword, tempPass)
+    } catch {
+      throw new Error('No se pudo leer el certificado. Si fue importado antes de la última actualización, reimporta el archivo .p12.')
+    }
+
+    const tempPath = join(tmpdir(), `aurea-portal-${Date.now()}.pfx`)
+    writeFileSync(tempPath, tempP12)
+
+    let winThumbprint = ''
+
+    const cleanup = () => {
+      try { unlinkSync(tempPath) } catch { /* ignore */ }
+      if (process.platform === 'win32' && winThumbprint) {
+        try {
+          execSync(
+            `powershell -Command "Remove-Item -Path 'Cert:\\CurrentUser\\My\\${winThumbprint}' -DeleteKey -ErrorAction SilentlyContinue"`,
+            { timeout: 10000 }
+          )
+        } catch { /* ignore */ }
+      } else if (process.platform === 'darwin' && dbCert.fingerprint) {
+        const sha1 = dbCert.fingerprint.replace(/:/g, '')
+        try {
+          execSync(
+            `security delete-certificate -Z '${sha1}' ~/Library/Keychains/login.keychain-db 2>/dev/null || true`,
+            { timeout: 10000 }
+          )
+        } catch { /* ignore */ }
+      }
+    }
+
+    try {
+      // 3. Install to OS cert store
+      if (process.platform === 'win32') {
+        const psOut = execSync(
+          `powershell -Command "$pwd = ConvertTo-SecureString -String '${tempPass}' -Force -AsPlainText; $cert = Import-PfxCertificate -FilePath '${tempPath.replace(/\\/g, '\\\\')}' -CertStoreLocation Cert:\\CurrentUser\\My -Password $pwd -Exportable; Write-Output $cert.Thumbprint"`,
+          { encoding: 'utf8', timeout: 30000 }
+        )
+        winThumbprint = psOut.trim()
+      } else if (process.platform === 'darwin') {
+        execSync(
+          `security import '${tempPath}' -k ~/Library/Keychains/login.keychain-db -P '${tempPass}' -A 2>/dev/null || true`,
+          { encoding: 'utf8', timeout: 30000 }
+        )
+      }
+
+      // 4. Open browser window — select-client-certificate will fire with our cert in the list
+      const win = new BrowserWindow({
+        width: 1280,
+        height: 900,
+        title: `${dbCert.alias} — ÁureaCert`,
+        webPreferences: { sandbox: true },
+      })
+
+      win.webContents.on('select-client-certificate', (event, _url, list, callback) => {
+        event.preventDefault()
+        const match = list.find((c) =>
+          c.serialNumber?.toLowerCase().replace(/^0+/, '') ===
+          dbCert.serial_number?.toLowerCase().replace(/^0+/, '')
+        )
+        callback(match ?? list[0] ?? undefined!)
+      })
+
+      win.on('closed', cleanup)
+      win.loadURL(data.url)
+
+      getDb().prepare(`
+        INSERT INTO audit_log (certificate_id, certificate_alias, client_name, action, url)
+        VALUES (?, ?, ?, 'portal_access', ?)
+      `).run(data.certId, dbCert.alias, dbCert.client_name ?? null, data.url)
+
+      return { success: true }
+    } catch (err) {
+      cleanup()
+      throw err
+    }
   })
 
   ipcMain.handle('certificates:scanOsStore', async () => {
@@ -252,7 +372,9 @@ async function importCertFromWindowsStore(
 
     const buffer = readFileSync(tempPath)
     const info = parseP12Info(buffer, tempPass)
-    const { encrypted, iv, salt } = encryptP12(buffer, masterPassword)
+    // Re-package so inner P12 password equals masterPassword — required for OS store install later
+    const repackaged = repackageP12(buffer, tempPass, masterPassword)
+    const { encrypted, iv, salt } = encryptP12(repackaged, masterPassword)
 
     const result = getDb().prepare(`
       INSERT INTO certificates

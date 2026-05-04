@@ -31,6 +31,8 @@ const api = {
       ipcRenderer.invoke('certificates:importFromOsStore', data),
     parseP12: (filePath: string, password: string) =>
       ipcRenderer.invoke('certificates:parseP12', filePath, password),
+    openPortalWithCert: (data: { certId: number; url: string; masterPassword: string }) =>
+      ipcRenderer.invoke('certificates:openPortalWithCert', data),
   },
   procedures: {
     getAll: (clientId?: number) => ipcRenderer.invoke('procedures:getAll', clientId),

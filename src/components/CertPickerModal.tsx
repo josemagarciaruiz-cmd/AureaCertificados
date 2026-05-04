@@ -19,7 +19,9 @@ interface Props {
 export default function CertPickerModal({ tramiteName, portalUrl, onClose }: Props) {
   const [certs, setCerts] = useState<Certificate[]>([])
   const [search, setSearch] = useState('')
+  const [masterPassword, setMasterPassword] = useState('')
   const [launching, setLaunching] = useState<number | null>(null)
+  const [error, setError] = useState('')
 
   useEffect(() => {
     window.api.certificates.getAll().then((data) => setCerts(data as Certificate[]))
@@ -35,19 +37,31 @@ export default function CertPickerModal({ tramiteName, portalUrl, onClose }: Pro
   })
 
   const handleOpen = async (cert: Certificate) => {
+    if (!masterPassword.trim()) {
+      setError('Introduce la contraseña maestra para abrir el portal con el certificado.')
+      return
+    }
+    setError('')
     setLaunching(cert.id)
-    await window.api.certificates.openBatchPortal({
-      certs: [{ id: cert.id, serialNumber: cert.serial_number, alias: cert.alias }],
-      url: portalUrl,
-    })
-    onClose()
+    try {
+      await window.api.certificates.openPortalWithCert({
+        certId: cert.id,
+        url: portalUrl,
+        masterPassword: masterPassword.trim(),
+      })
+      onClose()
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err)
+      setError(msg)
+      setLaunching(null)
+    }
   }
 
   const getDaysLeft = (validTo: string) => differenceInDays(parseISO(validTo), new Date())
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center" style={{ background: 'rgba(0,0,0,0.75)' }}>
-      <div className="card w-full max-w-xl p-0" style={{ maxHeight: '80vh', display: 'flex', flexDirection: 'column' }}>
+      <div className="card w-full max-w-xl p-0" style={{ maxHeight: '85vh', display: 'flex', flexDirection: 'column' }}>
         <div className="flex items-center justify-between px-6 py-5 border-b" style={{ borderColor: 'var(--color-border)', flexShrink: 0 }}>
           <div>
             <div className="kicker mb-1">Seleccionar certificado</div>
@@ -65,7 +79,20 @@ export default function CertPickerModal({ tramiteName, portalUrl, onClose }: Pro
             value={search}
             onChange={(e) => setSearch(e.target.value)}
             autoFocus
+            style={{ marginBottom: '0.6rem' }}
           />
+          <input
+            className="field-input"
+            type="password"
+            placeholder="Contraseña maestra del almacén de certificados..."
+            value={masterPassword}
+            onChange={(e) => { setMasterPassword(e.target.value); setError('') }}
+          />
+          {error && (
+            <p style={{ fontSize: '11px', color: 'var(--color-danger)', marginTop: '0.4rem', fontFamily: 'var(--font-mono)' }}>
+              {error}
+            </p>
+          )}
         </div>
 
         <div style={{ overflowY: 'auto', flex: 1, padding: '0 0.75rem 1rem' }}>
@@ -88,7 +115,7 @@ export default function CertPickerModal({ tramiteName, portalUrl, onClose }: Pro
                   opacity: expired ? 0.5 : 1,
                 }}
                 onMouseEnter={(e) => { if (!expired) e.currentTarget.style.borderColor = 'var(--color-accent)' }}
-                onMouseLeave={(e) => e.currentTarget.style.borderColor = 'var(--color-border)'}
+                onMouseLeave={(e) => { e.currentTarget.style.borderColor = 'var(--color-border)' }}
                 onClick={() => !expired && handleOpen(c)}
                 disabled={!!launching || expired}
               >
@@ -120,6 +147,12 @@ export default function CertPickerModal({ tramiteName, portalUrl, onClose }: Pro
               </button>
             )
           })}
+        </div>
+
+        <div className="px-6 py-3 border-t" style={{ borderColor: 'var(--color-border)', flexShrink: 0 }}>
+          <p style={{ fontSize: '11px', color: 'var(--color-text-muted)' }}>
+            El certificado se instalará temporalmente en el almacén del sistema y se eliminará al cerrar la ventana.
+          </p>
         </div>
       </div>
     </div>
