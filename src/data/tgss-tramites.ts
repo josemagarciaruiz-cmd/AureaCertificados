@@ -41,13 +41,11 @@ export const TGSS_TRAMITES: TgssTramite[] = [
 
   // BLOQUE 7 — CERTIFICADOS Y CONSULTAS
   { id: 'cert-corriente', name: 'Certificado de estar al corriente de pago', block: 'Certificados', category: 'certificados', description: 'Descargable con certificado digital. Necesario para contratar con AA.PP., subvenciones, licitaciones', portal_url: 'https://sede.seg-social.gob.es/wps/portal/sede/sede/EmpresasyProfesionales/Informes+y+Certificados/N201736', system: 'Sede Electrónica TGSS' },
-  { id: 'vida-laboral', name: 'Informe de vida laboral', block: 'Certificados', category: 'certificados', description: 'Historial completo de cotización por regímenes y periodos. Accesible con o sin certificado (SMS)', portal_url: 'https://portal.seg-social.gob.es/wps/portal/importass/importass/Categorias/Vida+laboral+e+informes/Informes+de+tus+cotizaciones', system: 'IMPORTASS / Sede Electrónica' },
-  { id: 'trabajadores-alta', name: 'Informe de trabajadores en alta en un CCC', block: 'Certificados', category: 'certificados', description: 'Consulta de todos los trabajadores activos en un Código de Cuenta de Cotización', portal_url: 'https://sede.seg-social.gob.es/wps/portal/sede/sede/EmpresasyProfesionales/Informes+y+Certificados/N201736', system: 'Sede Electrónica TGSS' },
+  { id: 'vida-laboral', name: 'Informe de vida laboral', block: 'Certificados', category: 'certificados', description: 'Historial completo de cotización por regímenes y periodos. Accesible con o sin certificado (SMS)', portal_url: 'https://portal.seg-social.gob.es/wps/portal/importass/importass/Categorias/Vida+laboral+e+informes', system: 'IMPORTASS / Sede Electrónica' },
   { id: 'simulador-jubilacion', name: 'Simulación de jubilación', block: 'Certificados', category: 'certificados', description: 'Estimación de pensión futura. Disponible sin certificado digital (solo SMS)', portal_url: 'https://prestaciones.seg-social.es/jubilacion.html', system: 'Portal Prestaciones INSS' },
 
   // BLOQUE 8 — NOTIFICACIONES
   { id: 'dehu', name: 'DEHU — Notificaciones electrónicas', block: 'Notificaciones', category: 'notificaciones', description: 'Dirección Electrónica Habilitada Única. Recepción de notificaciones de AEAT, TGSS, Correos y otras administraciones. Requiere certificado digital', portal_url: 'https://dehu.redsara.es/', system: 'DEHU / REDsara' },
-  { id: 'notif-060', name: 'Notificaciones 060 (NEO)', block: 'Notificaciones', category: 'notificaciones', description: 'Acceso al buzón de notificaciones electrónicas obligatorias de la AGE. Equivalente a DEHU accesible desde cl@ve', portal_url: 'https://notificaciones.060.gob.es/', system: 'Portal 060' },
 ]
 
 export const TGSS_BLOCKS = [
