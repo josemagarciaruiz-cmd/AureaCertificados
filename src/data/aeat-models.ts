@@ -72,11 +72,8 @@ export const AEAT_MODELS: AeatModel[] = [
   { model: '289', name: 'Cuentas financieras — CRS (Common Reporting Standard)', category: 'informativas', periodicity: 'anual', description: 'Entidades financieras informan sobre titulares extranjeros (intercambio automático internacional)', portal_url: 'https://sede.agenciatributaria.gob.es/Sede/procedimientoini/GI40.shtml' },
   { model: '345', name: 'Planes de pensiones, PPA, PIAS, seguros de dependencia', category: 'informativas', periodicity: 'anual', description: 'Gestoras de fondos de pensiones informan sobre partícipes y aportaciones', portal_url: 'https://sede.agenciatributaria.gob.es/Sede/procedimientoini/GI43.shtml' },
   { model: '347', name: 'Declaración anual de operaciones con terceros', category: 'informativas', periodicity: 'anual', description: 'Operaciones con clientes y proveedores > 3.005,06€. Plazo: hasta 28/29 de febrero', portal_url: 'https://sede.agenciatributaria.gob.es/Sede/procedimientoini/GI51.shtml' },
-  { model: '170', name: 'Operaciones con tarjetas de pago (NUEVO MENSUAL 2026)', category: 'informativas', periodicity: 'mensual', description: 'NOVEDAD 2026: declaración mensual de operaciones con tarjetas de crédito/débito y pagos por móvil', portal_url: 'https://sede.agenciatributaria.gob.es/Sede/procedimientoini/GI32.shtml', notes: 'Nueva periodicidad mensual desde enero 2026' },
-
   // BIENES EN EL EXTRANJERO
   { model: '720', name: 'Bienes y derechos en el extranjero', category: 'informativas', periodicity: 'anual', description: 'Residentes declaran cuentas, valores y bienes inmuebles en el extranjero > 50.000€. Plazo: enero-marzo', portal_url: 'https://sede.agenciatributaria.gob.es/Sede/procedimientoini/GI34.shtml' },
-  { model: '721', name: 'Monedas virtuales en el extranjero', category: 'informativas', periodicity: 'anual', description: 'Residentes declaran criptomonedas custodiadas por entidades extranjeras > 50.000€. Plazo: enero-marzo', portal_url: 'https://sede.agenciatributaria.gob.es/Sede/procedimientoini/GI55.shtml' },
 ]
 
 export const AEAT_CATEGORIES = [
