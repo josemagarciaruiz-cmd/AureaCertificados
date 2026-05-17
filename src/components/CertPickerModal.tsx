@@ -83,7 +83,7 @@ export default function CertPickerModal({ tramiteName, portalUrl, filterClientId
         })
         setProgress(i + 1)
         if (i < certIds.length - 1) {
-          await new Promise((r) => setTimeout(r, 700))
+          await new Promise((r) => setTimeout(r, 1500))
         }
       } catch (err: unknown) {
         const msg = err instanceof Error ? err.message : String(err)

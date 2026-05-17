@@ -290,6 +290,28 @@ export function registerCertificateHandlers(): void {
       })
 
       win.on('closed', cleanup)
+
+      // Auto-click the certificate access button once DEHU's landing page loads
+      win.webContents.on('did-finish-load', () => {
+        win.webContents.executeJavaScript(`
+          (function() {
+            // DEHU: look for the certificate access link/button and click it
+            const selectors = [
+              'a[href*="certificado"]',
+              'a[href*="certificate"]',
+              'button[id*="cert"]',
+              'a[id*="cert"]',
+              '[data-id="cert"]',
+              '.acceso-certificado',
+            ]
+            for (const sel of selectors) {
+              const el = document.querySelector(sel)
+              if (el) { el.click(); break }
+            }
+          })()
+        `).catch(() => { /* page may not support JS injection */ })
+      })
+
       win.loadURL(data.url)
 
       getDb().prepare(`
