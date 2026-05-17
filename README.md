@@ -26,6 +26,20 @@ Construida con **Electron 29 · React 18 · TypeScript · SQLite**.
 
 ---
 
+## Descargar el instalador (sin necesidad de código)
+
+Si solo quieres instalar la app en tu equipo sin clonar el repositorio ni instalar nada de desarrollo, descarga directamente el instalador generado por GitHub Actions:
+
+1. Ve a [https://github.com/josemagarciaruiz-cmd/aureacertificados/actions](https://github.com/josemagarciaruiz-cmd/aureacertificados/actions)
+2. Haz clic en la ejecución más reciente del workflow **"Build installers"**
+3. En la sección **Artifacts** (parte inferior de la página), descarga:
+   - **AureaCertificados-mac** → instala el `.dmg` en macOS
+   - **AureaCertificados-win** → ejecuta el `.exe` en Windows
+
+> **Nota sobre advertencias de seguridad:** al no estar firmada con certificado de pago, macOS mostrará un aviso de Gatekeeper (clic derecho → Abrir → Abrir de todas formas) y Windows mostrará SmartScreen (clic en "Más información" → "Ejecutar de todas formas"). Ambas advertencias son normales para apps de distribución interna no firmadas.
+
+---
+
 ## Clonar e instalar
 
 ```bash
@@ -110,6 +124,25 @@ npm run package:linux
 ```
 
 El instalador resultante se genera en la carpeta `release/`.
+
+---
+
+## Mover la app a otro equipo
+
+Si quieres replicar la app en un PC diferente (por ejemplo, pasar de macOS a Windows o clonar en un segundo equipo), **nunca copies la carpeta `node_modules`**. Los módulos nativos como `better-sqlite3` se compilan para el sistema operativo y arquitectura del equipo donde se ejecuta `npm install`. Copiarlos entre sistemas provoca pantalla negra o cierre inmediato.
+
+El proceso correcto siempre es:
+
+```bash
+git clone https://github.com/josemagarciaruiz-cmd/aureacertificados.git
+cd aureacertificados
+git checkout claude/review-web-app-design-2UEqk
+npm install --ignore-scripts
+npx @electron/rebuild
+npm run dev
+```
+
+En Windows, asegúrate de tener las herramientas de compilación instaladas (ver sección *Requisitos previos*) antes de ejecutar `npm install`.
 
 ---
 

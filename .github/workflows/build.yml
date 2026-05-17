@@ -1,0 +1,69 @@
+name: Build installers
+
+on:
+  # Ejecución manual desde la pestaña Actions de GitHub
+  workflow_dispatch:
+
+  # Automático al crear un tag de versión (ej: v1.0.0, v1.2.3)
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-latest
+            platform: mac
+            artifact_name: AureaCertificados-mac
+            artifact_glob: release/*.dmg
+
+          - os: windows-latest
+            platform: win
+            artifact_name: AureaCertificados-win
+            artifact_glob: release/*.exe
+
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - name: Checkout código
+        uses: actions/checkout@v4
+
+      - name: Instalar Node.js 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: 'npm'
+
+      # Instala sin compilar módulos nativos todavía
+      - name: Instalar dependencias (sin scripts nativos)
+        run: npm install --ignore-scripts
+
+      # Descarga el binario de Electron si --ignore-scripts lo saltó
+      - name: Asegurar binario de Electron
+        run: node node_modules/electron/install.js
+        env:
+          # Acelera la descarga usando el mirror de GitHub
+          ELECTRON_MIRROR: https://github.com/electron/electron/releases/download/
+
+      # Recompila better-sqlite3 y keytar contra el Node de Electron
+      - name: Recompilar módulos nativos contra Electron
+        run: npx @electron/rebuild
+
+      # Build de la app + generación del instalador
+      - name: Generar instalador
+        run: npm run package:${{ matrix.platform }}
+        env:
+          # Evita que electron-builder intente firmar en CI
+          CSC_IDENTITY_AUTO_DISCOVERY: false
+
+      # Sube el instalador como artefacto descargable en GitHub
+      - name: Subir instalador como artefacto
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact_name }}
+          path: ${{ matrix.artifact_glob }}
+          retention-days: 30
+          if-no-files-found: error
