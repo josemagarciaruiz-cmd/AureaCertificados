@@ -3,6 +3,7 @@ import { differenceInDays, parseISO } from 'date-fns'
 
 interface Certificate {
   id: number
+  client_id: number
   alias: string
   client_name: string
   client_nif: string
@@ -13,10 +14,11 @@ interface Certificate {
 interface Props {
   tramiteName: string
   portalUrl: string
+  filterClientId?: number
   onClose: () => void
 }
 
-export default function CertPickerModal({ tramiteName, portalUrl, onClose }: Props) {
+export default function CertPickerModal({ tramiteName, portalUrl, filterClientId, onClose }: Props) {
   const [certs, setCerts] = useState<Certificate[]>([])
   const [search, setSearch] = useState('')
   const [selected, setSelected] = useState<Set<number>>(new Set())
@@ -30,7 +32,9 @@ export default function CertPickerModal({ tramiteName, portalUrl, onClose }: Pro
     window.api.certificates.getAll().then((data) => setCerts(data as Certificate[]))
   }, [])
 
-  const filtered = certs.filter((c) => {
+  const visibleCerts = filterClientId ? certs.filter((c) => c.client_id === filterClientId) : certs
+
+  const filtered = visibleCerts.filter((c) => {
     const q = search.toLowerCase()
     return (
       c.alias.toLowerCase().includes(q) ||

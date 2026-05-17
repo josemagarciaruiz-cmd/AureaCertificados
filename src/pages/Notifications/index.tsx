@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { format, parseISO, differenceInDays } from 'date-fns'
 import { es } from 'date-fns/locale'
+import DehuPanel from '@components/DehuPanel'
 
 interface Notification {
   id: number
@@ -44,6 +45,7 @@ export default function Notifications() {
   const [notifications, setNotifications] = useState<Notification[]>([])
   const [statusFilter, setStatusFilter] = useState('all')
   const [refreshing, setRefreshing] = useState(false)
+  const [activeTab, setActiveTab] = useState<'alerts' | 'dehu'>('alerts')
 
   const load = () =>
     window.api.notifications.getAll().then((data) => setNotifications(data as Notification[]))
@@ -83,16 +85,41 @@ export default function Notifications() {
             {unreadCount > 0 ? `${unreadCount} alertas nuevas` : 'Sin alertas nuevas'}
           </p>
         </div>
+        {activeTab === 'alerts' && (
+          <button
+            className="btn-secondary"
+            style={{ fontSize: '11px' }}
+            onClick={handleRefresh}
+            disabled={refreshing}
+          >
+            {refreshing ? 'Actualizando...' : '↻ Actualizar alertas'}
+          </button>
+        )}
+      </div>
+
+      {/* Tabs */}
+      <div className="flex gap-1 mb-5" style={{ borderBottom: '1px solid var(--color-border)', paddingBottom: '0' }}>
         <button
-          className="btn-secondary"
-          style={{ fontSize: '11px' }}
-          onClick={handleRefresh}
-          disabled={refreshing}
+          className={activeTab === 'alerts' ? 'btn-primary' : 'btn-ghost'}
+          style={{ padding: '0.5rem 1rem', fontSize: '11px', borderRadius: '4px 4px 0 0', marginBottom: '-1px' }}
+          onClick={() => setActiveTab('alerts')}
         >
-          {refreshing ? 'Actualizando...' : '↻ Actualizar alertas'}
+          Alertas {unreadCount > 0 && <span style={{ marginLeft: '4px', background: 'var(--color-danger)', color: '#fff', borderRadius: '8px', padding: '0 5px', fontSize: '9px' }}>{unreadCount}</span>}
+        </button>
+        <button
+          className={activeTab === 'dehu' ? 'btn-primary' : 'btn-ghost'}
+          style={{ padding: '0.5rem 1rem', fontSize: '11px', borderRadius: '4px 4px 0 0', marginBottom: '-1px' }}
+          onClick={() => setActiveTab('dehu')}
+        >
+          Buzón DEHU
         </button>
       </div>
 
+      {/* DEHU panel */}
+      {activeTab === 'dehu' && <DehuPanel />}
+
+      {/* Alerts panel */}
+      {activeTab === 'alerts' && <>
       <div className="flex gap-1 mb-5">
         {([['all', 'Todas'], ['unread', 'Nuevas'], ['read', 'Leídas'], ['managed', 'Gestionadas'], ['archived', 'Archivadas']] as [string, string][]).map(([val, label]) => {
           const count = val === 'all' ? notifications.length : notifications.filter((n) => n.status === val).length
@@ -202,6 +229,7 @@ export default function Notifications() {
           </tbody>
         </table>
       </div>
+      </>}
     </div>
   )
 }
