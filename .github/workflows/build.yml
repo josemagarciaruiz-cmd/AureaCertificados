@@ -4,11 +4,10 @@ on:
   # Ejecución manual desde la pestaña Actions de GitHub
   workflow_dispatch:
 
-  # Automático en cada push a la rama de desarrollo, a main, o al crear un tag v*
+  # Automático en cada push a main o al crear un tag v*
   push:
     branches:
       - main
-      - claude/review-web-app-design-2UEqk
     tags:
       - 'v*'
 
