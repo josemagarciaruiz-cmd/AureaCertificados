@@ -272,12 +272,12 @@ export function registerCertificateHandlers(): void {
       // Small delay so the OS cert store change is visible to Chromium
       await new Promise<void>((r) => setTimeout(r, 400))
 
-      // 4. Open browser window — select-client-certificate will fire with our cert in the list
+      // 4. Open browser window with isolated session so Chromium never reuses a cached cert
       const win = new BrowserWindow({
         width: 1280,
         height: 900,
         title: `${dbCert.alias} — ÁureaCert`,
-        webPreferences: { sandbox: true },
+        webPreferences: { sandbox: true, partition: `cert-${data.certId}-${Date.now()}` },
       })
 
       win.webContents.on('select-client-certificate', (event, _url, list, callback) => {
@@ -319,7 +319,7 @@ export function registerCertificateHandlers(): void {
         width: 1280,
         height: 900,
         title: `${cert.alias} — ÁureaCert`,
-        webPreferences: { sandbox: true },
+        webPreferences: { sandbox: true, partition: `cert-${cert.id}-${Date.now()}-${i}` },
       })
 
       win.webContents.on('select-client-certificate', (event, _url, list, callback) => {
