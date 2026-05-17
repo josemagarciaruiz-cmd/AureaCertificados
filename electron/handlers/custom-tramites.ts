@@ -21,15 +21,15 @@ export function registerCustomTramiteHandlers(): void {
 
   ipcMain.handle('custom-tramites:create', (_, data: Omit<CustomTramiteRow, 'id' | 'created_at'>) => {
     const result = getDb().prepare(
-      'INSERT INTO custom_tramites (name, category, portal_url, description) VALUES (?, ?, ?, ?)'
-    ).run(data.name, data.category, data.portal_url, data.description || '')
+      'INSERT INTO custom_tramites (name, category, subcategory, portal_url, description) VALUES (?, ?, ?, ?, ?)'
+    ).run(data.name, data.category, (data as any).subcategory || '', data.portal_url, data.description || '')
     return { id: result.lastInsertRowid }
   })
 
   ipcMain.handle('custom-tramites:update', (_, id: number, data: Partial<Omit<CustomTramiteRow, 'id' | 'created_at'>>) => {
     getDb().prepare(
-      'UPDATE custom_tramites SET name = COALESCE(?, name), portal_url = COALESCE(?, portal_url), description = COALESCE(?, description) WHERE id = ?'
-    ).run(data.name ?? null, data.portal_url ?? null, data.description ?? null, id)
+      'UPDATE custom_tramites SET name = COALESCE(?, name), portal_url = COALESCE(?, portal_url), description = COALESCE(?, description), subcategory = COALESCE(?, subcategory) WHERE id = ?'
+    ).run(data.name ?? null, data.portal_url ?? null, data.description ?? null, (data as any).subcategory ?? null, id)
     return { success: true }
   })
 

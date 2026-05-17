@@ -22,6 +22,11 @@ function runMigrations(): void {
   if (!notifCols.find((c) => c.name === 'source_key')) {
     db.exec("ALTER TABLE notifications ADD COLUMN source_key TEXT")
   }
+
+  const customCols = db.prepare("PRAGMA table_info(custom_tramites)").all() as { name: string }[]
+  if (!customCols.find((c) => c.name === 'subcategory')) {
+    db.exec("ALTER TABLE custom_tramites ADD COLUMN subcategory TEXT NOT NULL DEFAULT ''")
+  }
 }
 
 function createTables(): void {

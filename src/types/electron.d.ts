@@ -65,8 +65,8 @@ declare global {
       customTramites: {
         getAll: () => Promise<unknown[]>
         getByCategory: (category: string) => Promise<unknown[]>
-        create: (data: { name: string; category: string; portal_url: string; description: string }) => Promise<{ id: number }>
-        update: (id: number, data: { name?: string; portal_url?: string; description?: string }) => Promise<unknown>
+        create: (data: { name: string; category: string; subcategory?: string; portal_url: string; description: string }) => Promise<{ id: number }>
+        update: (id: number, data: { name?: string; portal_url?: string; description?: string; subcategory?: string }) => Promise<unknown>
         delete: (id: number) => Promise<unknown>
       }
       settings: {

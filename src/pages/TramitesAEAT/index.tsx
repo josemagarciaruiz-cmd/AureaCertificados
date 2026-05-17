@@ -158,7 +158,7 @@ export default function TramitesAEAT() {
         </table>
       </div>
 
-      <CustomTramitesSection category="aeat" />
+      <CustomTramitesSection category="aeat" blocks={AEAT_CATEGORIES} />
 
       {certPicker && (
         <CertPickerModal

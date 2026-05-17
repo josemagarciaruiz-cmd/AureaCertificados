@@ -147,7 +147,7 @@ export default function TramitesTGSS() {
         </table>
       </div>
 
-      <CustomTramitesSection category="tgss" />
+      <CustomTramitesSection category="tgss" blocks={TGSS_BLOCKS} />
 
       {certPicker && (
         <CertPickerModal
