@@ -122,14 +122,20 @@ export function registerCertificateHandlers(): void {
     filePath: string
     password: string
     alias: string
-    clientId: number
+    clientId: number | null
     masterPassword: string
   }) => {
     const buffer = readFileSync(data.filePath)
     const info = parseP12Info(buffer, data.password)
+
+    // Use CN from the certificate as alias if the filename-derived alias is generic
+    const resolvedAlias = data.alias || info.subject || 'Certificado'
+
     // Re-package so the inner P12 password equals masterPassword — required for OS store install later
     const repackaged = repackageP12(buffer, data.password, data.masterPassword)
     const { encrypted, iv, salt } = encryptP12(repackaged, data.masterPassword)
+
+    const clientId = data.clientId ?? null
 
     const result = getDb().prepare(`
       INSERT INTO certificates
@@ -139,8 +145,8 @@ export function registerCertificateHandlers(): void {
         (@clientId, @alias, @issuer, @serialNumber, @subject, @validFrom, @validTo,
          @encrypted, @iv, @salt, @fingerprint, 'manual')
     `).run({
-      clientId: data.clientId,
-      alias: data.alias,
+      clientId,
+      alias: resolvedAlias,
       issuer: info.issuer,
       serialNumber: info.serialNumber,
       subject: info.subject,
@@ -157,7 +163,7 @@ export function registerCertificateHandlers(): void {
     getDb().prepare(`
       INSERT INTO audit_log (certificate_id, certificate_alias, client_name, action)
       VALUES (?, ?, (SELECT name FROM clients WHERE id = ?), 'import')
-    `).run(result.lastInsertRowid, data.alias, data.clientId)
+    `).run(result.lastInsertRowid, resolvedAlias, clientId)
 
     return cert
   })

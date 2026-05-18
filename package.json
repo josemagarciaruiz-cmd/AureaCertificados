@@ -1,6 +1,6 @@
 {
   "name": "aurea-certificados",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "description": "Gestión de certificados digitales y trámites AEAT/TGSS para gestorías y asesorías",
   "main": "out/main/index.js",
   "scripts": {
