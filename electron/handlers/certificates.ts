@@ -370,9 +370,10 @@ export function registerCertificateHandlers(): void {
     alias: string
     clientId: number | null
     masterPassword: string
+    password?: string
   }) => {
     if (process.platform !== 'win32') throw new Error('Solo disponible en Windows')
-    return importCertFromWindowsStore(data.thumbprint, data.alias, data.clientId, data.masterPassword)
+    return importCertFromWindowsStore(data.thumbprint, data.alias, data.clientId, data.masterPassword, data.password)
   })
 }
 
@@ -393,15 +394,20 @@ async function importCertFromWindowsStore(
   thumbprint: string,
   alias: string,
   clientId: number | null,
-  masterPassword: string
+  masterPassword: string,
+  certPassword?: string
 ): Promise<unknown> {
   const tempPass = crypto.randomBytes(16).toString('hex')
   const tempDir = tmpdir().replace(/\\/g, '/')
   const tempPath = join(tempDir, `aurea-${Date.now()}.pfx`)
 
   try {
+    // If the user provided an individual certificate password, use it to unlock the private key first
+    const exportScript = certPassword
+      ? `$cert = Get-ChildItem -Path 'Cert:\\CurrentUser\\My\\${thumbprint}'; $exportPwd = ConvertTo-SecureString -String '${tempPass}' -Force -AsPlainText; Export-PfxCertificate -Cert $cert -FilePath '${tempPath}' -Password $exportPwd -ChainOption EndEntityCertOnly | Out-Null`
+      : `$cert = Get-ChildItem -Path 'Cert:\\CurrentUser\\My\\${thumbprint}'; $pwd = ConvertTo-SecureString -String '${tempPass}' -Force -AsPlainText; Export-PfxCertificate -Cert $cert -FilePath '${tempPath}' -Password $pwd | Out-Null`
     execSync(
-      `powershell -Command "$cert = Get-ChildItem -Path 'Cert:\\CurrentUser\\My\\${thumbprint}'; $pwd = ConvertTo-SecureString -String '${tempPass}' -Force -AsPlainText; Export-PfxCertificate -Cert $cert -FilePath '${tempPath}' -Password $pwd | Out-Null"`,
+      `powershell -Command "${exportScript}"`,
       { encoding: 'utf8', timeout: 30000 }
     )
 

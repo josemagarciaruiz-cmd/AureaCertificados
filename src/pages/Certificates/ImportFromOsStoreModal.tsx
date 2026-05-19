@@ -27,6 +27,7 @@ interface CertRow {
   selected: boolean
   alias: string
   clientId: string
+  password: string
   status: 'pending' | 'importing' | 'ok' | 'error'
   error?: string
 }
@@ -66,6 +67,7 @@ export default function ImportFromOsStoreModal({ onClose, onImported }: Props) {
             selected: c.Exportable !== false,
             alias: extractCN(c.Subject),
             clientId: '',
+            password: '',
             status: 'pending' as const,
           }))
       )
@@ -73,10 +75,18 @@ export default function ImportFromOsStoreModal({ onClose, onImported }: Props) {
     })
   }, [])
 
+  const allSelected = rows.length > 0 && rows.filter(r => r.exportable !== false).every(r => r.selected)
+  const someSelected = rows.some(r => r.selected) && !allSelected
+
   const toggle = (thumbprint: string) =>
     setRows((r) => r.map((row) => row.thumbprint === thumbprint ? { ...row, selected: !row.selected } : row))
 
-  const updateRow = (thumbprint: string, field: 'alias' | 'clientId', value: string) =>
+  const toggleAll = () => {
+    const next = !allSelected
+    setRows((r) => r.map((row) => row.exportable !== false ? { ...row, selected: next } : row))
+  }
+
+  const updateRow = (thumbprint: string, field: 'alias' | 'clientId' | 'password', value: string) =>
     setRows((r) => r.map((row) => row.thumbprint === thumbprint ? { ...row, [field]: value } : row))
 
   const selectedRows = rows.filter((r) => r.selected)
@@ -93,6 +103,7 @@ export default function ImportFromOsStoreModal({ onClose, onImported }: Props) {
           alias: row.alias || extractCN(row.subject),
           clientId: row.clientId ? parseInt(row.clientId) : null,
           masterPassword,
+          password: row.password || undefined,
         })
         setRows((r) => r.map((x) => x.thumbprint === row.thumbprint ? { ...x, status: 'ok' } : x))
       } catch (e) {
@@ -135,10 +146,20 @@ export default function ImportFromOsStoreModal({ onClose, onImported }: Props) {
             <table className="table-aurea">
               <thead>
                 <tr>
-                  <th style={{ width: 40 }}></th>
+                  <th style={{ width: 40 }}>
+                    <input
+                      type="checkbox"
+                      checked={allSelected}
+                      ref={(el) => { if (el) el.indeterminate = someSelected }}
+                      onChange={toggleAll}
+                      disabled={importing}
+                      style={{ cursor: 'pointer' }}
+                    />
+                  </th>
                   <th>Certificado</th>
                   <th>Caduca</th>
                   <th>Alias</th>
+                  <th style={{ width: 150 }}>Contraseña exp.</th>
                   <th>Cliente</th>
                   <th style={{ width: 100 }}>Estado</th>
                 </tr>
@@ -189,6 +210,17 @@ export default function ImportFromOsStoreModal({ onClose, onImported }: Props) {
                           onChange={(e) => updateRow(row.thumbprint, 'alias', e.target.value)}
                           disabled={!row.selected || importing}
                           placeholder="Alias..."
+                        />
+                      </td>
+                      <td>
+                        <input
+                          className="field-input"
+                          type="password"
+                          style={{ fontSize: '12px', padding: '0.3rem 0.5rem', maxWidth: '140px' }}
+                          value={row.password}
+                          onChange={(e) => updateRow(row.thumbprint, 'password', e.target.value)}
+                          disabled={!row.selected || importing || row.status === 'ok'}
+                          placeholder="Opcional"
                         />
                       </td>
                       <td>
