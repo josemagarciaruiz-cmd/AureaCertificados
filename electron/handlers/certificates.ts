@@ -402,14 +402,16 @@ async function importCertFromWindowsStore(
   const tempPath = join(tempDir, `aurea-${Date.now()}.pfx`)
 
   try {
-    // If the user provided an individual certificate password, use it to unlock the private key first
-    const exportScript = certPassword
-      ? `$cert = Get-ChildItem -Path 'Cert:\\CurrentUser\\My\\${thumbprint}'; $exportPwd = ConvertTo-SecureString -String '${tempPass}' -Force -AsPlainText; Export-PfxCertificate -Cert $cert -FilePath '${tempPath}' -Password $exportPwd -ChainOption EndEntityCertOnly | Out-Null`
-      : `$cert = Get-ChildItem -Path 'Cert:\\CurrentUser\\My\\${thumbprint}'; $pwd = ConvertTo-SecureString -String '${tempPass}' -Force -AsPlainText; Export-PfxCertificate -Cert $cert -FilePath '${tempPath}' -Password $pwd | Out-Null`
-    execSync(
-      `powershell -Command "${exportScript}"`,
-      { encoding: 'utf8', timeout: 30000 }
-    )
+    const psScript = `$cert = Get-ChildItem -Path 'Cert:\\CurrentUser\\My\\${thumbprint}'; if (-not $cert) { throw 'Certificado no encontrado en el almacen' }; $p = ConvertTo-SecureString -String '${tempPass}' -Force -AsPlainText; Export-PfxCertificate -Cert $cert -FilePath '${tempPath}' -Password $p | Out-Null`
+    try {
+      execSync(
+        `powershell -NonInteractive -Command "${psScript}"`,
+        { encoding: 'utf8', timeout: 30000, stdio: ['pipe', 'pipe', 'pipe'] }
+      )
+    } catch (psErr: any) {
+      const detail = (psErr.stderr as string || '').trim() || (psErr.stdout as string || '').trim() || psErr.message || 'Error desconocido'
+      throw new Error(`PowerShell: ${detail.replace(/\r?\n/g, ' ').slice(0, 300)}`)
+    }
 
     const buffer = readFileSync(tempPath)
     const info = parseP12Info(buffer, tempPass)

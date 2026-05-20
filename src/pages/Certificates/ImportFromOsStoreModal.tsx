@@ -245,9 +245,14 @@ export default function ImportFromOsStoreModal({ onClose, onImported }: Props) {
                           <span className="badge badge-ok" style={{ fontSize: '10px' }}>✓ Listo</span>
                         )}
                         {row.status === 'error' && (
-                          <span className="badge badge-critical" style={{ fontSize: '10px' }} title={row.error}>
-                            Error
-                          </span>
+                          <div>
+                            <span className="badge badge-critical" style={{ fontSize: '10px' }}>Error</span>
+                            {row.error && (
+                              <div style={{ fontSize: '10px', color: 'var(--color-danger)', marginTop: '3px', maxWidth: '200px', wordBreak: 'break-word', lineHeight: 1.3 }}>
+                                {row.error}
+                              </div>
+                            )}
+                          </div>
                         )}
                       </td>
                     </tr>
