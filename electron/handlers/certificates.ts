@@ -379,9 +379,52 @@ export function registerCertificateHandlers(): void {
 
 function scanWindowsCertStore(): unknown[] {
   try {
+    // Detect exportability for both legacy CAPI keys and modern CNG keys (FNMT, AEAT, etc.)
+    const psScript = `
+$certs = Get-ChildItem Cert:\\CurrentUser\\My | Where-Object { $_.HasPrivateKey }
+$result = foreach ($c in $certs) {
+    $exportable = try {
+        # Legacy CAPI
+        $e = $c.PrivateKey.CspKeyContainerInfo.Exportable
+        if ($null -ne $e) { $e }
+        else {
+            # Modern CNG RSA
+            $rsa = [System.Security.Cryptography.X509Certificates.RSACertificateExtensions]::GetRSAPrivateKey($c)
+            if ($rsa -is [System.Security.Cryptography.RSACng]) {
+                try {
+                    $prop = $rsa.Key.GetProperty('Export Policy', [System.Security.Cryptography.CngPropertyOptions]::None)
+                    $val = [System.BitConverter]::ToInt32($prop.GetValue(), 0)
+                    ($val -band 1) -ne 0
+                } catch { $true }  # If we can't read the policy, assume exportable
+            } else {
+                # CNG ECDSA or unknown
+                $ec = [System.Security.Cryptography.X509Certificates.ECDsaCertificateExtensions]::GetECDsaPrivateKey($c)
+                if ($ec -is [System.Security.Cryptography.ECDsaCng]) {
+                    try {
+                        $prop = $ec.Key.GetProperty('Export Policy', [System.Security.Cryptography.CngPropertyOptions]::None)
+                        $val = [System.BitConverter]::ToInt32($prop.GetValue(), 0)
+                        ($val -band 1) -ne 0
+                    } catch { $true }
+                } else { 'unknown' }
+            }
+        }
+    } catch { 'unknown' }
+    [PSCustomObject]@{
+        Thumbprint   = $c.Thumbprint
+        Subject      = $c.Subject
+        Issuer       = $c.Issuer
+        NotBefore    = $c.NotBefore.ToString('yyyy-MM-ddTHH:mm:ss')
+        NotAfter     = $c.NotAfter.ToString('yyyy-MM-ddTHH:mm:ss')
+        HasPrivateKey = $c.HasPrivateKey
+        Exportable   = $exportable
+    }
+}
+$result | ConvertTo-Json -Compress
+`
+    const psEncoded = Buffer.from(psScript, 'utf16le').toString('base64')
     const output = execSync(
-      `powershell -Command "Get-ChildItem Cert:\\CurrentUser\\My | Select-Object Thumbprint, Subject, Issuer, @{N='NotBefore';E={$_.NotBefore.ToString('yyyy-MM-ddTHH:mm:ss')}}, @{N='NotAfter';E={$_.NotAfter.ToString('yyyy-MM-ddTHH:mm:ss')}}, @{N='HasPrivateKey';E={$_.HasPrivateKey}}, @{N='Exportable';E={try{$_.PrivateKey.CspKeyContainerInfo.Exportable}catch{'unknown'}}} | ConvertTo-Json -Compress"`,
-      { encoding: 'utf8', timeout: 10000 }
+      `powershell -NonInteractive -EncodedCommand ${psEncoded}`,
+      { encoding: 'utf8', timeout: 15000, stdio: ['pipe', 'pipe', 'pipe'] }
     )
     const raw = JSON.parse(output.trim())
     return Array.isArray(raw) ? raw : [raw]
@@ -395,17 +438,53 @@ async function importCertFromWindowsStore(
   alias: string,
   clientId: number | null,
   masterPassword: string,
-  certPassword?: string
+  _certPassword?: string
 ): Promise<unknown> {
   const tempPass = crypto.randomBytes(16).toString('hex')
-  const tempDir = tmpdir().replace(/\\/g, '/')
-  const tempPath = join(tempDir, `aurea-${Date.now()}.pfx`)
+  const tempPath = join(tmpdir(), `aurea-${Date.now()}.pfx`)
 
   try {
-    const psScript = `$cert = Get-ChildItem -Path 'Cert:\\CurrentUser\\My\\${thumbprint}'; if (-not $cert) { throw 'Certificado no encontrado en el almacen' }; $p = ConvertTo-SecureString -String '${tempPass}' -Force -AsPlainText; Export-PfxCertificate -Cert $cert -FilePath '${tempPath}' -Password $p | Out-Null`
+    // PowerShell script that:
+    // 1. Locates the cert by thumbprint
+    // 2. Attempts to mark the CNG private key as exportable (needed for modern FNMT certs)
+    //    — works without admin rights for keys stored in the user profile
+    // 3. Falls back to legacy CAPI exportability detection for older certs
+    // 4. Exports to a temporary PFX with a random password
+    const psScript = `
+$ErrorActionPreference = 'Stop'
+$cert = Get-ChildItem -Path 'Cert:\\CurrentUser\\My\\${thumbprint}'
+if (-not $cert) { throw 'Certificado no encontrado en el almacen' }
+
+# Try to mark CNG RSA key as exportable (FNMT and modern certs use CNG)
+try {
+    $rsa = [System.Security.Cryptography.X509Certificates.RSACertificateExtensions]::GetRSAPrivateKey($cert)
+    if ($rsa -is [System.Security.Cryptography.RSACng]) {
+        $policyBytes = [System.BitConverter]::GetBytes([int]3)
+        $exportPolicy = New-Object System.Security.Cryptography.CngProperty(
+            'Export Policy', $policyBytes, [System.Security.Cryptography.CngPropertyOptions]::Persist)
+        $rsa.Key.SetProperty($exportPolicy)
+    }
+} catch {}
+
+# Try to mark CNG ECDSA key as exportable (for EC certificates)
+try {
+    $ecdsa = [System.Security.Cryptography.X509Certificates.ECDsaCertificateExtensions]::GetECDsaPrivateKey($cert)
+    if ($ecdsa -is [System.Security.Cryptography.ECDsaCng]) {
+        $policyBytes = [System.BitConverter]::GetBytes([int]3)
+        $exportPolicy = New-Object System.Security.Cryptography.CngProperty(
+            'Export Policy', $policyBytes, [System.Security.Cryptography.CngPropertyOptions]::Persist)
+        $ecdsa.Key.SetProperty($exportPolicy)
+    }
+} catch {}
+
+$p = ConvertTo-SecureString -String '${tempPass}' -Force -AsPlainText
+Export-PfxCertificate -Cert $cert -FilePath '${tempPath.replace(/\\/g, '\\\\')}' -Password $p | Out-Null
+`
+    // Use -EncodedCommand to avoid escaping issues with paths and special chars
+    const psEncoded = Buffer.from(psScript, 'utf16le').toString('base64')
     try {
       execSync(
-        `powershell -NonInteractive -Command "${psScript}"`,
+        `powershell -NonInteractive -EncodedCommand ${psEncoded}`,
         { encoding: 'utf8', timeout: 30000, stdio: ['pipe', 'pipe', 'pipe'] }
       )
     } catch (psErr: any) {
@@ -425,7 +504,7 @@ async function importCertFromWindowsStore(
          encrypted_p12, iv, salt, fingerprint, source)
       VALUES
         (@clientId, @alias, @issuer, @serialNumber, @subject, @validFrom, @validTo,
-         @encrypted, @iv, @salt, @fingerprint, 'windows_store')
+         @encrypted, @iv, @salt, @fingerprint, 'os_store')
     `).run({
       clientId,
       alias,
