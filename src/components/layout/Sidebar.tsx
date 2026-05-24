@@ -5,9 +5,10 @@ const nav = [
   {
     group: 'Principal',
     items: [
-      { path: '/dashboard', label: 'Dashboard', icon: IconDashboard },
+      { path: '/inicio', label: 'Inicio', icon: IconDashboard },
       { path: '/clients', label: 'Clientes', icon: IconClients },
       { path: '/certificates', label: 'Certificados', icon: IconCert },
+      { path: '/accesos-directos', label: 'Accesos directos', icon: IconShortcuts },
       { path: '/notifications', label: 'Notificaciones', icon: IconBell },
     ],
   },
@@ -174,6 +175,14 @@ function IconCalendar({ size = 18 }: { size?: number }) {
   return (
     <svg width={size} height={size} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
       <path strokeLinecap="round" strokeLinejoin="round" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
+    </svg>
+  )
+}
+
+function IconShortcuts({ size = 18 }: { size?: number }) {
+  return (
+    <svg width={size} height={size} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+      <path strokeLinecap="round" strokeLinejoin="round" d="M13 10V3L4 14h7v7l9-11h-7z" />
     </svg>
   )
 }

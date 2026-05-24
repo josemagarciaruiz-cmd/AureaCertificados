@@ -73,6 +73,16 @@ const api = {
     verifyLockPassword: (password: string) => ipcRenderer.invoke('settings:verifyLockPassword', password),
     removeLockPassword: () => ipcRenderer.invoke('settings:removeLockPassword'),
   },
+  shortcuts: {
+    getAll: () => ipcRenderer.invoke('shortcuts:getAll'),
+    getTop: (limit?: number) => ipcRenderer.invoke('shortcuts:getTop', limit),
+    create: (data: { name: string; url: string; certificate_id: number | null; color: string; notes?: string }) =>
+      ipcRenderer.invoke('shortcuts:create', data),
+    update: (id: number, data: { name?: string; url?: string; certificate_id?: number | null; color?: string; notes?: string }) =>
+      ipcRenderer.invoke('shortcuts:update', id, data),
+    delete: (id: number) => ipcRenderer.invoke('shortcuts:delete', id),
+    recordUse: (id: number) => ipcRenderer.invoke('shortcuts:recordUse', id),
+  },
 }
 
 contextBridge.exposeInMainWorld('api', api)

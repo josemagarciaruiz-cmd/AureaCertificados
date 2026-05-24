@@ -77,6 +77,14 @@ declare global {
         verifyLockPassword: (password: string) => Promise<boolean>
         removeLockPassword: () => Promise<unknown>
       }
+      shortcuts: {
+        getAll: () => Promise<unknown[]>
+        getTop: (limit?: number) => Promise<unknown[]>
+        create: (data: { name: string; url: string; certificate_id: number | null; color: string; notes?: string }) => Promise<unknown>
+        update: (id: number, data: { name?: string; url?: string; certificate_id?: number | null; color?: string; notes?: string }) => Promise<unknown>
+        delete: (id: number) => Promise<unknown>
+        recordUse: (id: number) => Promise<unknown>
+      }
     }
   }
 }

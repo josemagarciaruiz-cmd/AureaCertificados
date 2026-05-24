@@ -27,6 +27,22 @@ function runMigrations(): void {
   if (!customCols.find((c) => c.name === 'subcategory')) {
     db.exec("ALTER TABLE custom_tramites ADD COLUMN subcategory TEXT NOT NULL DEFAULT ''")
   }
+
+  // v1.0.6 — Accesos directos
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS shortcuts (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      name TEXT NOT NULL,
+      url TEXT NOT NULL,
+      certificate_id INTEGER REFERENCES certificates(id) ON DELETE SET NULL,
+      use_count INTEGER NOT NULL DEFAULT 0,
+      last_used TEXT,
+      color TEXT NOT NULL DEFAULT '#d4a853',
+      notes TEXT,
+      created_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+    CREATE INDEX IF NOT EXISTS idx_shortcuts_use_count ON shortcuts(use_count DESC);
+  `)
 }
 
 function createTables(): void {

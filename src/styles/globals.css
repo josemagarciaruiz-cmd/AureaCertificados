@@ -52,7 +52,7 @@ body {
 ::-webkit-scrollbar-thumb { background: var(--color-border-light); }
 ::-webkit-scrollbar-thumb:hover { background: var(--color-accent); }
 
-/* Inputs */
+/* Inputs — user-select:none on body blocks keyboard input in Electron/Chromium */
 input, textarea, select {
   font-family: var(--font-sans);
   background: var(--color-bg-secondary);
@@ -60,6 +60,8 @@ input, textarea, select {
   border: 1px solid var(--color-border);
   outline: none;
   transition: border-color 0.2s;
+  user-select: text;
+  -webkit-user-select: text;
 }
 input:focus, textarea:focus, select:focus {
   border-color: var(--color-accent);

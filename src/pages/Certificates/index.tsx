@@ -5,6 +5,7 @@ import ImportCertForm from './ImportCertForm'
 import AuditLogPanel from './AuditLogPanel'
 import ImportFromOsStoreModal from './ImportFromOsStoreModal'
 import BatchPortalModal from './BatchPortalModal'
+import RenewalModal, { CertForRenewal } from './RenewalModal'
 
 interface Certificate {
   id: number
@@ -20,6 +21,8 @@ interface Certificate {
   source: string
 }
 
+const RENEWAL_THRESHOLD_DAYS = 90  // show Renovar button within this window
+
 export default function Certificates() {
   const [certs, setCerts] = useState<Certificate[]>([])
   const [search, setSearch] = useState('')
@@ -29,6 +32,7 @@ export default function Certificates() {
   const [showBatch, setShowBatch] = useState(false)
   const [filter, setFilter] = useState<'all' | 'expiring' | 'expired'>('all')
   const [selected, setSelected] = useState<Set<number>>(new Set())
+  const [renewingCert, setRenewingCert] = useState<CertForRenewal | null>(null)
 
   const load = () => window.api.certificates.getAll().then((data) => setCerts(data as Certificate[]))
   useEffect(() => { load() }, [])
@@ -197,13 +201,40 @@ export default function Certificates() {
                   <span className="badge badge-pending">{c.source}</span>
                 </td>
                 <td>
-                  <button
-                    className="btn-ghost"
-                    style={{ fontSize: '11px', color: 'var(--color-danger)' }}
-                    onClick={() => handleDelete(c.id, c.alias)}
-                  >
-                    Eliminar
-                  </button>
+                  <div className="flex gap-1 justify-end">
+                    {getDaysLeft(c.valid_to) <= RENEWAL_THRESHOLD_DAYS && (
+                      <button
+                        className="btn-ghost"
+                        style={{
+                          fontSize: '11px',
+                          color: getDaysLeft(c.valid_to) < 0
+                            ? 'var(--color-danger)'
+                            : getDaysLeft(c.valid_to) <= 30
+                            ? '#fb923c'
+                            : '#facc15',
+                          fontWeight: 600,
+                        }}
+                        onClick={() => setRenewingCert({
+                          id: c.id,
+                          alias: c.alias,
+                          issuer: c.issuer,
+                          subject: c.subject,
+                          valid_to: c.valid_to,
+                          client_name: c.client_name,
+                          client_nif: c.client_nif,
+                        })}
+                      >
+                        {getDaysLeft(c.valid_to) < 0 ? '⚠ Caducado' : '↻ Renovar'}
+                      </button>
+                    )}
+                    <button
+                      className="btn-ghost"
+                      style={{ fontSize: '11px', color: 'var(--color-danger)' }}
+                      onClick={() => handleDelete(c.id, c.alias)}
+                    >
+                      Eliminar
+                    </button>
+                  </div>
                 </td>
               </tr>
             ))}
@@ -255,6 +286,14 @@ export default function Certificates() {
         />
       )}
       {showAudit && <AuditLogPanel onClose={() => setShowAudit(false)} />}
+
+      {renewingCert && (
+        <RenewalModal
+          cert={renewingCert}
+          onClose={() => setRenewingCert(null)}
+          onImport={() => { setRenewingCert(null); setShowImport(true) }}
+        />
+      )}
     </div>
   )
 }

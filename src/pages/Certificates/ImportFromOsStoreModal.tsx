@@ -10,7 +10,10 @@ interface OsCert {
   NotBefore: string
   NotAfter: string
   HasPrivateKey: boolean
-  Exportable: boolean | string
+  // true = exportable CAPI/CNG, false = CAPI locked (no private key access),
+  // 'cng_locked' = CNG key with policy=0 but the import can force-unlock it,
+  // 'unknown' = could not determine
+  Exportable: boolean | 'cng_locked' | 'unknown'
 }
 
 interface Client {
@@ -23,7 +26,7 @@ interface CertRow {
   thumbprint: string
   subject: string
   notAfter: string
-  exportable: boolean | string
+  exportable: boolean | 'cng_locked' | 'unknown'
   selected: boolean
   alias: string
   clientId: string
@@ -64,6 +67,7 @@ export default function ImportFromOsStoreModal({ onClose, onImported }: Props) {
             subject: c.Subject,
             notAfter: c.NotAfter,
             exportable: c.Exportable,
+            // Select all by default: 'cng_locked' certs can be force-unlocked during import
             selected: c.Exportable !== false,
             alias: extractCN(c.Subject),
             clientId: '',
@@ -75,7 +79,10 @@ export default function ImportFromOsStoreModal({ onClose, onImported }: Props) {
     })
   }, [])
 
-  const allSelected = rows.length > 0 && rows.filter(r => r.exportable !== false).every(r => r.selected)
+  // 'false' = CAPI cert with no exportable private key (genuinely impossible to export)
+  // 'cng_locked' = CNG cert with policy=0, but import will force-unlock it — so selectable
+  const canSelect = (row: CertRow) => row.exportable !== false
+  const allSelected = rows.length > 0 && rows.filter(canSelect).every(r => r.selected)
   const someSelected = rows.some(r => r.selected) && !allSelected
 
   const toggle = (thumbprint: string) =>
@@ -83,7 +90,7 @@ export default function ImportFromOsStoreModal({ onClose, onImported }: Props) {
 
   const toggleAll = () => {
     const next = !allSelected
-    setRows((r) => r.map((row) => row.exportable !== false ? { ...row, selected: next } : row))
+    setRows((r) => r.map((row) => canSelect(row) ? { ...row, selected: next } : row))
   }
 
   const updateRow = (thumbprint: string, field: 'alias' | 'clientId' | 'password', value: string) =>
@@ -168,14 +175,14 @@ export default function ImportFromOsStoreModal({ onClose, onImported }: Props) {
                 {rows.map((row) => {
                   const days = differenceInDays(new Date(row.notAfter), new Date())
                   return (
-                    <tr key={row.thumbprint} style={{ opacity: row.selected ? 1 : 0.45 }}>
+                    <tr key={row.thumbprint} style={{ opacity: (row.selected || row.exportable === false) ? (row.selected ? 1 : 0.45) : 0.45 }}>
                       <td>
                         <input
                           type="checkbox"
                           checked={row.selected}
                           onChange={() => toggle(row.thumbprint)}
-                          disabled={importing}
-                          style={{ cursor: 'pointer' }}
+                          disabled={importing || !canSelect(row)}
+                          style={{ cursor: canSelect(row) ? 'pointer' : 'not-allowed' }}
                         />
                       </td>
                       <td>
@@ -186,8 +193,13 @@ export default function ImportFromOsStoreModal({ onClose, onImported }: Props) {
                           {row.thumbprint.slice(0, 24)}...
                         </div>
                         {row.exportable === false && (
+                          <span className="badge badge-critical" style={{ fontSize: '9px', marginTop: '2px' }}>
+                            ✕ CAPI bloqueado
+                          </span>
+                        )}
+                        {row.exportable === 'cng_locked' && (
                           <span className="badge badge-warning" style={{ fontSize: '9px', marginTop: '2px' }}>
-                            ⚠ No exportable
+                            ⚡ CNG — se forzará exportación
                           </span>
                         )}
                       </td>

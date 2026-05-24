@@ -9,6 +9,7 @@ import { registerCalendarHandlers } from './handlers/calendar'
 import { registerSettingsHandlers } from './handlers/settings'
 import { registerNotificationHandlers, generateAlerts } from './handlers/notifications'
 import { registerCustomTramiteHandlers } from './handlers/custom-tramites'
+import { registerShortcutHandlers } from './handlers/shortcuts'
 
 let mainWindow: BrowserWindow | null = null
 
@@ -76,6 +77,7 @@ app.whenReady().then(() => {
   registerSettingsHandlers()
   registerNotificationHandlers()
   registerCustomTramiteHandlers()
+  registerShortcutHandlers()
 
   ipcMain.handle('app:getVersion', () => app.getVersion())
   ipcMain.handle('app:openExternal', (_, url: string) => shell.openExternal(url))

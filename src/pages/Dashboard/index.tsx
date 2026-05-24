@@ -5,6 +5,19 @@ import { es } from 'date-fns/locale'
 import { AEAT_MODELS } from '@data/aeat-models'
 import { TGSS_TRAMITES } from '@data/tgss-tramites'
 import { useCertPicker } from '@contexts/CertPickerContext'
+import RenewalModal, { CertForRenewal } from '@pages/Certificates/RenewalModal'
+
+interface UserShortcut {
+  id: number
+  name: string
+  url: string
+  certificate_id: number | null
+  cert_alias: string | null
+  client_name: string | null
+  use_count: number
+  color: string
+  notes: string | null
+}
 
 interface UpcomingDeadline {
   id: number
@@ -18,6 +31,9 @@ interface ExpiringCert {
   id: number
   alias: string
   client_name: string
+  client_nif: string
+  issuer: string
+  subject: string
   valid_to: string
 }
 
@@ -65,6 +81,12 @@ export default function Dashboard() {
   const [urlOverrides, setUrlOverrides] = useState<Record<string, string>>({})
   const [editingLabel, setEditingLabel] = useState<string | null>(null)
   const [editingValue, setEditingValue] = useState('')
+  const [userShortcuts, setUserShortcuts] = useState<UserShortcut[]>([])
+  const [launchingShortcut, setLaunchingShortcut] = useState<UserShortcut | null>(null)
+  const [shortcutPassword, setShortcutPassword] = useState('')
+  const [shortcutError, setShortcutError] = useState('')
+  const [shortcutLaunching, setShortcutLaunching] = useState(false)
+  const [renewingCert, setRenewingCert] = useState<CertForRenewal | null>(null)
 
   useEffect(() => {
     Promise.all([
@@ -74,7 +96,9 @@ export default function Dashboard() {
       window.api.clients.getAll(),
       window.api.certificates.getAll(),
       window.api.notifications.getAll(),
-    ]).then(([usageVal, overridesVal, dl, clients, certs, notifs]) => {
+      window.api.shortcuts.getTop(6),
+    ]).then(([usageVal, overridesVal, dl, clients, certs, notifs, topSc]) => {
+      setUserShortcuts(topSc as UserShortcut[])
       if (usageVal) setUsage(JSON.parse(usageVal as string) as UsageMap)
       if (overridesVal) setUrlOverrides(JSON.parse(overridesVal as string) as Record<string, string>)
       setDeadlines((dl as UpcomingDeadline[]).slice(0, 8))
@@ -82,9 +106,9 @@ export default function Dashboard() {
       const expiring = (certs as ExpiringCert[]).filter((c) => {
         if (!c.valid_to) return false
         const days = differenceInDays(parseISO(c.valid_to), today)
-        return days <= 60 && days >= 0
-      })
-      setExpiringCerts(expiring.slice(0, 5))
+        return days <= 90  // include expired and up to 90 days ahead
+      }).sort((a, b) => differenceInDays(parseISO(a.valid_to), today) - differenceInDays(parseISO(b.valid_to), today))
+      setExpiringCerts(expiring.slice(0, 8))
       setStats({
         clients: (clients as unknown[]).length,
         certs: (certs as unknown[]).length,
@@ -142,7 +166,137 @@ export default function Dashboard() {
   return (
     <div className="space-y-6">
 
-      {/* Accesos rápidos */}
+      {/* Mis accesos directos (usuario) */}
+      {userShortcuts.length > 0 && (
+        <div>
+          <div className="flex items-center justify-between mb-1">
+            <div className="kicker">Mis accesos directos</div>
+            <button className="btn-ghost" style={{ fontSize: '10px' }} onClick={() => navigate('/accesos-directos')}>
+              Gestionar →
+            </button>
+          </div>
+          <div className="divider-gold-thin mb-4" style={{ width: '40px' }} />
+          <div className="grid grid-cols-6 gap-2">
+            {userShortcuts.map((sc) => (
+              <button
+                key={sc.id}
+                className="card p-0 text-left"
+                style={{ borderTop: `2px solid ${sc.color}`, cursor: 'pointer', background: 'var(--color-bg-card)' }}
+                onClick={() => {
+                  if (sc.certificate_id) {
+                    setLaunchingShortcut(sc)
+                    setShortcutPassword('')
+                    setShortcutError('')
+                  } else {
+                    window.api.shortcuts.recordUse(sc.id)
+                    window.api.app.openExternal(sc.url)
+                  }
+                }}
+              >
+                <div style={{ padding: '0.6rem 0.7rem' }}>
+                  <div style={{ fontSize: '11px', fontWeight: 600, color: 'var(--color-text-primary)', lineHeight: 1.3 }}>
+                    {sc.name}
+                  </div>
+                  {sc.cert_alias && (
+                    <div style={{ fontSize: '9px', color: sc.color, marginTop: '2px', fontFamily: 'var(--font-mono)' }}>
+                      ⚡ {sc.cert_alias}
+                    </div>
+                  )}
+                  {sc.use_count > 0 && (
+                    <div style={{ fontSize: '9px', color: 'var(--color-text-muted)', marginTop: '1px', fontFamily: 'var(--font-mono)' }}>
+                      {sc.use_count} uso{sc.use_count !== 1 ? 's' : ''}
+                    </div>
+                  )}
+                </div>
+              </button>
+            ))}
+          </div>
+
+          {/* Inline mini password modal for shortcuts with cert */}
+          {launchingShortcut && (
+            <div className="fixed inset-0 z-50 flex items-center justify-center" style={{ background: 'rgba(0,0,0,0.8)' }}>
+              <div className="card w-full max-w-sm p-0">
+                <div className="flex items-center justify-between px-5 py-4 border-b" style={{ borderColor: 'var(--color-border)', borderLeft: `3px solid ${launchingShortcut.color}` }}>
+                  <div>
+                    <div className="kicker mb-0.5">Acceso directo</div>
+                    <h2 style={{ fontSize: '15px', fontWeight: 700, color: 'var(--color-text-primary)' }}>
+                      {launchingShortcut.name}
+                    </h2>
+                    {launchingShortcut.cert_alias && (
+                      <div style={{ fontSize: '11px', color: 'var(--color-text-muted)', marginTop: '2px' }}>
+                        ⚡ <span style={{ color: 'var(--color-accent)' }}>{launchingShortcut.cert_alias}</span>
+                        {launchingShortcut.client_name && <span> · {launchingShortcut.client_name}</span>}
+                      </div>
+                    )}
+                  </div>
+                  <button className="btn-ghost" onClick={() => setLaunchingShortcut(null)}>✕</button>
+                </div>
+                <div style={{ padding: '1.25rem' }}>
+                  <label className="field-label">Contraseña maestra</label>
+                  <input
+                    className="field-input"
+                    type="password"
+                    value={shortcutPassword}
+                    onChange={(e) => { setShortcutPassword(e.target.value); setShortcutError('') }}
+                    placeholder="Contraseña maestra del despacho..."
+                    autoFocus
+                    onKeyDown={async (e) => {
+                      if (e.key !== 'Enter' || shortcutLaunching || !shortcutPassword.trim()) return
+                      setShortcutLaunching(true)
+                      try {
+                        await window.api.certificates.openPortalWithCert({
+                          certId: launchingShortcut.certificate_id!,
+                          url: launchingShortcut.url,
+                          masterPassword: shortcutPassword.trim(),
+                        })
+                        window.api.shortcuts.recordUse(launchingShortcut.id)
+                        setLaunchingShortcut(null)
+                      } catch (err: unknown) {
+                        setShortcutError(err instanceof Error ? err.message : String(err))
+                      } finally {
+                        setShortcutLaunching(false)
+                      }
+                    }}
+                  />
+                  {shortcutError && (
+                    <p style={{ fontSize: '11px', color: 'var(--color-danger)', marginTop: '0.4rem', fontFamily: 'var(--font-mono)' }}>
+                      {shortcutError}
+                    </p>
+                  )}
+                  <div className="flex justify-end gap-2" style={{ marginTop: '1rem' }}>
+                    <button className="btn-secondary" onClick={() => setLaunchingShortcut(null)}>Cancelar</button>
+                    <button
+                      className="btn-primary"
+                      disabled={shortcutLaunching || !shortcutPassword.trim()}
+                      onClick={async () => {
+                        if (!shortcutPassword.trim()) return
+                        setShortcutLaunching(true)
+                        try {
+                          await window.api.certificates.openPortalWithCert({
+                            certId: launchingShortcut.certificate_id!,
+                            url: launchingShortcut.url,
+                            masterPassword: shortcutPassword.trim(),
+                          })
+                          window.api.shortcuts.recordUse(launchingShortcut.id)
+                          setLaunchingShortcut(null)
+                        } catch (err: unknown) {
+                          setShortcutError(err instanceof Error ? err.message : String(err))
+                        } finally {
+                          setShortcutLaunching(false)
+                        }
+                      }}
+                    >
+                      {shortcutLaunching ? 'Abriendo...' : 'Abrir →'}
+                    </button>
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Accesos rápidos (trámites integrados) */}
       <div>
         <div className="kicker mb-1">Accesos rápidos</div>
         <div className="divider-gold-thin mb-4" style={{ width: '40px' }} />
@@ -255,6 +409,73 @@ export default function Dashboard() {
         ))}
       </div>
 
+      {/* Renovaciones pendientes */}
+      {expiringCerts.length > 0 && (
+        <div>
+          <div className="flex items-center justify-between mb-1">
+            <div className="kicker" style={{ color: expiringCerts.some(c => differenceInDays(parseISO(c.valid_to), new Date()) < 0) ? 'var(--color-danger)' : undefined }}>
+              {expiringCerts.some(c => differenceInDays(parseISO(c.valid_to), new Date()) < 0) ? '⚠ ' : ''}Renovaciones pendientes
+            </div>
+            <button className="btn-ghost" style={{ fontSize: '10px' }} onClick={() => navigate('/certificates')}>
+              Ver todos →
+            </button>
+          </div>
+          <div className="divider-gold-thin mb-4" style={{ width: '40px' }} />
+          <div
+            className="card p-0"
+            style={{ overflow: 'hidden' }}
+          >
+            {expiringCerts.map((c) => {
+              const days = daysUntil(c.valid_to)
+              const expired = days < 0
+              const urgent = !expired && days <= 30
+              const color = expired ? 'var(--color-danger)' : urgent ? '#fb923c' : '#facc15'
+              return (
+                <div
+                  key={c.id}
+                  className="flex items-center justify-between px-5 py-3 border-b"
+                  style={{ borderColor: 'var(--color-border)', borderLeft: `3px solid ${color}` }}
+                >
+                  <div>
+                    <div style={{ fontSize: '13px', color: 'var(--color-text-primary)', fontWeight: 500 }}>{c.alias}</div>
+                    <div style={{ fontSize: '11px', color: 'var(--color-text-muted)' }}>
+                      {c.client_name || '—'}
+                      {' · '}
+                      {expired
+                        ? `Caducó el ${format(parseISO(c.valid_to), "d MMM yyyy", { locale: es })}`
+                        : `Caduca el ${format(parseISO(c.valid_to), "d MMM yyyy", { locale: es })}`}
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <span
+                      className={`badge ${expired ? 'badge-critical' : urgent ? 'badge-warning' : 'badge-pending'}`}
+                      style={{ fontSize: '10px' }}
+                    >
+                      {expired ? 'Caducado' : `${days}d`}
+                    </span>
+                    <button
+                      className="btn-ghost"
+                      style={{ fontSize: '11px', color, fontWeight: 600 }}
+                      onClick={() => setRenewingCert({
+                        id: c.id,
+                        alias: c.alias,
+                        issuer: c.issuer,
+                        subject: c.subject,
+                        valid_to: c.valid_to,
+                        client_name: c.client_name,
+                        client_nif: c.client_nif,
+                      })}
+                    >
+                      {expired ? '⚠ Gestionar' : '↻ Renovar'}
+                    </button>
+                  </div>
+                </div>
+              )
+            })}
+          </div>
+        </div>
+      )}
+
       <div className="grid grid-cols-3 gap-6">
         {/* Plazos fiscales próximos */}
         <div className="card p-0 col-span-2">
@@ -307,24 +528,51 @@ export default function Dashboard() {
         {/* Certificados próximos a caducar */}
         <div className="card p-0">
           <div className="px-4 py-3 border-b" style={{ borderColor: 'var(--color-border)' }}>
-            <div className="kicker" style={{ fontSize: '9px' }}>Alerta</div>
+            <div className="kicker" style={{ fontSize: '9px' }}>
+              {expiringCerts.some(c => daysUntil(c.valid_to) < 0) ? '⚠ Alerta' : 'Alerta'}
+            </div>
             <div className="font-serif font-bold" style={{ color: 'var(--color-text-primary)', fontSize: '15px' }}>Certificados</div>
           </div>
           <div>
             {expiringCerts.length === 0 ? (
               <div className="px-4 py-4 text-center" style={{ color: 'var(--color-text-muted)', fontSize: '12px' }}>
-                Sin alertas de caducidad
+                ✓ Sin alertas de caducidad
               </div>
             ) : (
-              expiringCerts.map((c) => {
+              expiringCerts.slice(0, 5).map((c) => {
                 const days = daysUntil(c.valid_to)
+                const expired = days < 0
+                const color = expired ? 'var(--color-danger)' : days <= 30 ? '#fb923c' : '#facc15'
                 return (
-                  <div key={c.id} className="flex items-center justify-between px-4 py-2.5 border-b" style={{ borderColor: 'var(--color-border)' }}>
-                    <div>
+                  <div
+                    key={c.id}
+                    className="flex items-center justify-between px-4 py-2.5 border-b"
+                    style={{ borderColor: 'var(--color-border)', borderLeft: `2px solid ${color}` }}
+                  >
+                    <div style={{ minWidth: 0, flex: 1 }}>
                       <div style={{ fontSize: '12px', color: 'var(--color-text-primary)', fontWeight: 500 }}>{c.alias}</div>
                       <div style={{ fontSize: '11px', color: 'var(--color-text-muted)' }}>{c.client_name}</div>
                     </div>
-                    <span className={`badge ${days <= 15 ? 'badge-critical' : 'badge-warning'}`}>{days}d</span>
+                    <div className="flex items-center gap-1.5" style={{ flexShrink: 0 }}>
+                      <span className={`badge ${expired ? 'badge-critical' : days <= 30 ? 'badge-warning' : 'badge-pending'}`} style={{ fontSize: '9px' }}>
+                        {expired ? 'Cad.' : `${days}d`}
+                      </span>
+                      <button
+                        className="btn-ghost"
+                        style={{ fontSize: '10px', color, fontWeight: 600, padding: '2px 4px' }}
+                        onClick={() => setRenewingCert({
+                          id: c.id,
+                          alias: c.alias,
+                          issuer: c.issuer,
+                          subject: c.subject,
+                          valid_to: c.valid_to,
+                          client_name: c.client_name,
+                          client_nif: c.client_nif,
+                        })}
+                      >
+                        ↻
+                      </button>
+                    </div>
                   </div>
                 )
               })
@@ -332,6 +580,18 @@ export default function Dashboard() {
           </div>
         </div>
       </div>
+
+      {/* Renewal modal triggered from Dashboard */}
+      {renewingCert && (
+        <RenewalModal
+          cert={renewingCert}
+          onClose={() => setRenewingCert(null)}
+          onImport={() => {
+            setRenewingCert(null)
+            navigate('/certificates')
+          }}
+        />
+      )}
     </div>
   )
 }

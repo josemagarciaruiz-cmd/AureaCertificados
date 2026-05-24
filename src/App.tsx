@@ -11,6 +11,7 @@ import TramitesTGSS from '@pages/TramitesTGSS'
 import Calendar from '@pages/Calendar'
 import Notifications from '@pages/Notifications'
 import Settings from '@pages/Settings'
+import AccesosDirectos from '@pages/AccesosDirectos'
 
 export default function App() {
   const [locked, setLocked] = useState(false)
@@ -50,10 +51,12 @@ export default function App() {
       <CertPickerProvider>
       <Layout onLock={() => setLocked(true)}>
         <Routes>
-          <Route path="/" element={<Navigate to="/dashboard" replace />} />
-          <Route path="/dashboard" element={<Dashboard />} />
+          <Route path="/" element={<Navigate to="/inicio" replace />} />
+          <Route path="/dashboard" element={<Navigate to="/inicio" replace />} />
+          <Route path="/inicio" element={<Dashboard />} />
           <Route path="/clients" element={<Clients />} />
           <Route path="/certificates" element={<Certificates />} />
+          <Route path="/accesos-directos" element={<AccesosDirectos />} />
           <Route path="/tramites/aeat" element={<TramitesAEAT />} />
           <Route path="/tramites/tgss" element={<TramitesTGSS />} />
           <Route path="/calendar" element={<Calendar />} />

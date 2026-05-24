@@ -5,7 +5,9 @@ import * as crypto from 'crypto'
 import { readFileSync, writeFileSync, unlinkSync } from 'fs'
 import { tmpdir, homedir } from 'os'
 import { join } from 'path'
-import { execSync } from 'child_process'
+import { exec, execSync } from 'child_process'
+import { promisify } from 'util'
+const execAsync = promisify(exec)
 
 const ALGORITHM = 'aes-256-gcm'
 
@@ -236,31 +238,30 @@ export function registerCertificateHandlers(): void {
 
     let winThumbprint = ''
 
+    // Non-blocking cleanup: runs fire-and-forget so closing the window never freezes the UI
     const cleanup = () => {
       try { unlinkSync(tempPath) } catch { /* ignore */ }
       if (process.platform === 'win32' && winThumbprint) {
-        try {
-          execSync(
-            `powershell -Command "Remove-Item -Path 'Cert:\\CurrentUser\\My\\${winThumbprint}' -DeleteKey -ErrorAction SilentlyContinue"`,
-            { timeout: 10000 }
-          )
-        } catch { /* ignore */ }
+        exec(
+          `powershell -Command "Remove-Item -Path 'Cert:\\CurrentUser\\My\\${winThumbprint}' -DeleteKey -ErrorAction SilentlyContinue"`,
+          { timeout: 10000 },
+          () => { /* ignore result */ }
+        )
       } else if (process.platform === 'darwin' && dbCert.fingerprint) {
         const sha1 = dbCert.fingerprint.replace(/:/g, '')
         const keychainPath = `${homedir()}/Library/Keychains/login.keychain-db`
-        try {
-          execSync(
-            `security delete-certificate -Z '${sha1}' '${keychainPath}'`,
-            { timeout: 10000 }
-          )
-        } catch { /* ignore if cert already removed */ }
+        exec(
+          `security delete-certificate -Z '${sha1}' '${keychainPath}'`,
+          { timeout: 10000 },
+          () => { /* ignore if cert already removed */ }
+        )
       }
     }
 
     try {
-      // 3. Install to OS cert store
+      // 3. Install to OS cert store (async — never blocks main process)
       if (process.platform === 'win32') {
-        const psOut = execSync(
+        const { stdout: psOut } = await execAsync(
           `powershell -Command "$pwd = ConvertTo-SecureString -String '${tempPass}' -Force -AsPlainText; $cert = Import-PfxCertificate -FilePath '${tempPath.replace(/\\/g, '\\\\')}' -CertStoreLocation Cert:\\CurrentUser\\My -Password $pwd -Exportable; Write-Output $cert.Thumbprint"`,
           { encoding: 'utf8', timeout: 30000 }
         )
@@ -268,7 +269,7 @@ export function registerCertificateHandlers(): void {
       } else if (process.platform === 'darwin') {
         const keychainPath = `${homedir()}/Library/Keychains/login.keychain-db`
         try {
-          execSync(
+          await execAsync(
             `security import '${tempPath}' -k '${keychainPath}' -P '${tempPass}' -A -T ''`,
             { encoding: 'utf8', timeout: 30000 }
           )
@@ -293,6 +294,11 @@ export function registerCertificateHandlers(): void {
           dbCert.serial_number?.toLowerCase().replace(/^0+/, '')
         )
         callback(match ?? list[0] ?? undefined!)
+      })
+
+      // Prevent any portal page from blocking the window close with a beforeunload dialog
+      win.webContents.on('will-prevent-unload', (event) => {
+        event.preventDefault()
       })
 
       win.on('closed', cleanup)
@@ -377,9 +383,11 @@ export function registerCertificateHandlers(): void {
   })
 }
 
-function scanWindowsCertStore(): unknown[] {
+async function scanWindowsCertStore(): Promise<unknown[]> {
   try {
     // Detect exportability for both legacy CAPI keys and modern CNG keys (FNMT, AEAT, etc.)
+    // Note: CNG certs with Export Policy = 0 are shown as exportable='cng_locked' — the import
+    // function can still handle them by forcing the policy to 3 before exporting.
     const psScript = `
 $certs = Get-ChildItem Cert:\\CurrentUser\\My | Where-Object { $_.HasPrivateKey }
 $result = foreach ($c in $certs) {
@@ -394,8 +402,8 @@ $result = foreach ($c in $certs) {
                 try {
                     $prop = $rsa.Key.GetProperty('Export Policy', [System.Security.Cryptography.CngPropertyOptions]::None)
                     $val = [System.BitConverter]::ToInt32($prop.GetValue(), 0)
-                    ($val -band 1) -ne 0
-                } catch { $true }  # If we can't read the policy, assume exportable
+                    if (($val -band 1) -ne 0) { $true } else { 'cng_locked' }
+                } catch { 'cng_locked' }
             } else {
                 # CNG ECDSA or unknown
                 $ec = [System.Security.Cryptography.X509Certificates.ECDsaCertificateExtensions]::GetECDsaPrivateKey($c)
@@ -403,8 +411,8 @@ $result = foreach ($c in $certs) {
                     try {
                         $prop = $ec.Key.GetProperty('Export Policy', [System.Security.Cryptography.CngPropertyOptions]::None)
                         $val = [System.BitConverter]::ToInt32($prop.GetValue(), 0)
-                        ($val -band 1) -ne 0
-                    } catch { $true }
+                        if (($val -band 1) -ne 0) { $true } else { 'cng_locked' }
+                    } catch { 'cng_locked' }
                 } else { 'unknown' }
             }
         }
@@ -419,14 +427,14 @@ $result = foreach ($c in $certs) {
         Exportable   = $exportable
     }
 }
-$result | ConvertTo-Json -Compress
+$result | ConvertTo-Json -Compress -Depth 3
 `
     const psEncoded = Buffer.from(psScript, 'utf16le').toString('base64')
-    const output = execSync(
+    const { stdout } = await execAsync(
       `powershell -NonInteractive -EncodedCommand ${psEncoded}`,
-      { encoding: 'utf8', timeout: 15000, stdio: ['pipe', 'pipe', 'pipe'] }
+      { encoding: 'utf8', timeout: 90000 }  // 90s: 150 certs × CNG introspection can be slow
     )
-    const raw = JSON.parse(output.trim())
+    const raw = JSON.parse(stdout.trim())
     return Array.isArray(raw) ? raw : [raw]
   } catch {
     return []
@@ -483,9 +491,9 @@ Export-PfxCertificate -Cert $cert -FilePath '${tempPath.replace(/\\/g, '\\\\')}'
     // Use -EncodedCommand to avoid escaping issues with paths and special chars
     const psEncoded = Buffer.from(psScript, 'utf16le').toString('base64')
     try {
-      execSync(
+      await execAsync(
         `powershell -NonInteractive -EncodedCommand ${psEncoded}`,
-        { encoding: 'utf8', timeout: 30000, stdio: ['pipe', 'pipe', 'pipe'] }
+        { encoding: 'utf8', timeout: 30000 }
       )
     } catch (psErr: any) {
       const detail = (psErr.stderr as string || '').trim() || (psErr.stdout as string || '').trim() || psErr.message || 'Error desconocido'
