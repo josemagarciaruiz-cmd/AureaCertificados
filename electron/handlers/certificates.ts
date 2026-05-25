@@ -11,6 +11,25 @@ const execAsync = promisify(exec)
 
 const ALGORITHM = 'aes-256-gcm'
 
+/**
+ * Computes the SHA-1 thumbprint of a certificate from its PEM string.
+ * Electron's select-client-certificate event provides Certificate.data as PEM.
+ * The result is uppercase hex (no colons), matching PowerShell's thumbprint format.
+ */
+function getCertSha1(pemData: string): string {
+  try {
+    const match = pemData.match(/-----BEGIN CERTIFICATE-----\s*([\s\S]+?)\s*-----END CERTIFICATE-----/)
+    if (match) {
+      const der = Buffer.from(match[1].replace(/\s+/g, ''), 'base64')
+      return crypto.createHash('sha1').update(der).digest('hex').toUpperCase()
+    }
+    // Fallback: treat as raw binary DER
+    return crypto.createHash('sha1').update(Buffer.from(pemData, 'binary')).digest('hex').toUpperCase()
+  } catch {
+    return ''
+  }
+}
+
 function deriveKey(password: string, salt: Buffer): Buffer {
   return crypto.pbkdf2Sync(password, salt, 100000, 32, 'sha256')
 }
@@ -108,6 +127,18 @@ export function registerCertificateHandlers(): void {
   ipcMain.handle('certificates:getAll', () => {
     return getDb().prepare(`
       SELECT cert.*, c.name as client_name, c.nif_cif as client_nif
+      FROM certificates cert
+      LEFT JOIN clients c ON c.id = cert.client_id
+      ORDER BY cert.alias ASC
+    `).all()
+  })
+
+  // Lean endpoint: only metadata columns (no encrypted_p12/iv/salt blobs).
+  // Use this wherever only alias + validity info is needed (e.g. dropdowns).
+  ipcMain.handle('certificates:getAllMeta', () => {
+    return getDb().prepare(`
+      SELECT cert.id, cert.alias, cert.valid_from, cert.valid_to, cert.issuer, cert.subject,
+             c.name as client_name, c.nif_cif as client_nif
       FROM certificates cert
       LEFT JOIN clients c ON c.id = cert.client_id
       ORDER BY cert.alias ASC
@@ -289,11 +320,43 @@ export function registerCertificateHandlers(): void {
 
       win.webContents.on('select-client-certificate', (event, _url, list, callback) => {
         event.preventDefault()
-        const match = list.find((c) =>
-          c.serialNumber?.toLowerCase().replace(/^0+/, '') ===
-          dbCert.serial_number?.toLowerCase().replace(/^0+/, '')
-        )
-        callback(match ?? list[0] ?? undefined!)
+
+        // Build reference fingerprints from what we know about this specific cert.
+        // winThumbprint: SHA-1 thumbprint returned by PowerShell after import (Windows only).
+        // storedSha1: SHA-1 fingerprint stored in DB at import time (XX:XX:... → XXXXXX...).
+        const storedSha1 = dbCert.fingerprint
+          ? (dbCert.fingerprint as string).replace(/:/g, '').toUpperCase()
+          : null
+
+        // Primary matching: SHA-1 of each candidate cert's DER data.
+        // This is the most reliable method and avoids serial-number formatting differences
+        // between node-forge and Chromium on Windows.
+        let match = list.find((c) => {
+          const sha1 = getCertSha1(c.data as unknown as string)
+          if (!sha1) return false
+          if (winThumbprint && sha1 === winThumbprint) return true   // Windows: exact thumbprint
+          if (storedSha1 && sha1 === storedSha1) return true         // All platforms: stored SHA-1
+          return false
+        })
+
+        // Secondary fallback: serial number comparison (kept for certs imported before
+        // fingerprint storage was added, or if SHA-1 computation fails).
+        if (!match) {
+          const targetSerial = (dbCert.serial_number as string)?.toLowerCase().replace(/^0+/, '')
+          match = list.find((c) =>
+            c.serialNumber?.toLowerCase().replace(/^0+/, '') === targetSerial
+          )
+        }
+
+        // If we still cannot identify the correct cert, reject rather than silently
+        // picking list[0] which could be a completely unrelated certificate.
+        if (!match) {
+          console.error(`[ÁureaCert] select-client-certificate: no match found for cert id=${data.certId} (${dbCert.alias}). Rejecting to avoid using wrong cert.`)
+          callback(undefined as unknown as Electron.Certificate)
+          return
+        }
+
+        callback(match)
       })
 
       // Prevent any portal page from blocking the window close with a beforeunload dialog

@@ -19,6 +19,7 @@ const api = {
   },
   certificates: {
     getAll: () => ipcRenderer.invoke('certificates:getAll'),
+    getAllMeta: () => ipcRenderer.invoke('certificates:getAllMeta'),
     getByClient: (clientId: number) => ipcRenderer.invoke('certificates:getByClient', clientId),
     import: (data: unknown) => ipcRenderer.invoke('certificates:import', data),
     delete: (id: number) => ipcRenderer.invoke('certificates:delete', id),

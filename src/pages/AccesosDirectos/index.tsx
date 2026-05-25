@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 
 interface Shortcut {
   id: number
@@ -25,6 +25,41 @@ interface Certificate {
 
 const PALETTE = ['#d4a853', '#60a5fa', '#34d399', '#f472b6', '#fb923c', '#a78bfa', '#facc15', '#06b6d4']
 
+// React-based confirmation modal — avoids window.confirm() which creates a native OS
+// dialog that steals focus from the Electron window on Windows, causing keyboard
+// input to stop working in subsequent modals until the window regains focus.
+function ConfirmModal({
+  message,
+  onConfirm,
+  onCancel,
+}: {
+  message: string
+  onConfirm: () => void
+  onCancel: () => void
+}) {
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center" style={{ background: 'rgba(0,0,0,0.8)' }}>
+      <div className="card w-full max-w-sm p-0">
+        <div style={{ padding: '1.5rem' }}>
+          <p style={{ fontSize: '14px', color: 'var(--color-text-primary)', marginBottom: '1.5rem', lineHeight: 1.6 }}>
+            {message}
+          </p>
+          <div className="flex justify-end gap-2">
+            <button className="btn-secondary" onClick={onCancel}>Cancelar</button>
+            <button
+              className="btn-primary"
+              style={{ background: 'var(--color-danger)', borderColor: 'var(--color-danger)' }}
+              onClick={onConfirm}
+            >
+              Eliminar
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  )
+}
+
 function ShortcutFormModal({
   shortcut,
   certs,
@@ -42,6 +77,14 @@ function ShortcutFormModal({
   const [color, setColor] = useState(shortcut?.color ?? '#d4a853')
   const [notes, setNotes] = useState(shortcut?.notes ?? '')
   const [error, setError] = useState('')
+
+  // Explicit focus management: autoFocus alone is unreliable on Windows/Electron
+  // after native dialogs (confirm, alert) have taken and returned window focus.
+  const nameRef = useRef<HTMLInputElement>(null)
+  useEffect(() => {
+    const t = setTimeout(() => nameRef.current?.focus(), 80)
+    return () => clearTimeout(t)
+  }, [])
 
   const handleSave = () => {
     if (!name.trim()) { setError('El nombre es obligatorio.'); return }
@@ -76,11 +119,11 @@ function ShortcutFormModal({
           <div className="mb-4">
             <label className="field-label">Nombre *</label>
             <input
+              ref={nameRef}
               className="field-input"
               value={name}
               onChange={(e) => setName(e.target.value)}
               placeholder="Ej: DEHU — José García"
-              autoFocus
             />
           </div>
 
@@ -261,11 +304,13 @@ export default function AccesosDirectos() {
   const [showForm, setShowForm] = useState(false)
   const [editing, setEditing] = useState<Shortcut | null>(null)
   const [launching, setLaunching] = useState<Shortcut | null>(null)
+  const [confirmDelete, setConfirmDelete] = useState<Shortcut | null>(null)
 
   const load = async () => {
     const [sc, cs] = await Promise.all([
       window.api.shortcuts.getAll(),
-      window.api.certificates.getAll(),
+      // getAllMeta: only id/alias/valid_to/client fields — no encrypted_p12 blobs
+      window.api.certificates.getAllMeta(),
     ])
     setShortcuts(sc as Shortcut[])
     setCerts(cs as Certificate[])
@@ -284,9 +329,14 @@ export default function AccesosDirectos() {
     load()
   }
 
-  const handleDelete = async (sc: Shortcut) => {
-    if (!confirm(`¿Eliminar el acceso directo "${sc.name}"?`)) return
-    await window.api.shortcuts.delete(sc.id)
+  const handleDelete = (sc: Shortcut) => {
+    setConfirmDelete(sc)
+  }
+
+  const doConfirmDelete = async () => {
+    if (!confirmDelete) return
+    await window.api.shortcuts.delete(confirmDelete.id)
+    setConfirmDelete(null)
     load()
   }
 
@@ -445,6 +495,14 @@ export default function AccesosDirectos() {
         <LaunchModal
           shortcut={launching}
           onClose={() => { setLaunching(null); load() }}
+        />
+      )}
+
+      {confirmDelete && (
+        <ConfirmModal
+          message={`¿Eliminar el acceso directo "${confirmDelete.name}"?`}
+          onConfirm={doConfirmDelete}
+          onCancel={() => setConfirmDelete(null)}
         />
       )}
     </div>
