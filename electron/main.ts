@@ -33,6 +33,11 @@ function createWindow(): void {
   mainWindow.on('ready-to-show', () => {
     mainWindow!.show()
     if (is.dev) mainWindow!.webContents.openDevTools()
+    // generateAlerts() uses better-sqlite3 (synchronous) and can block the
+    // Node event loop for hundreds of milliseconds, preventing the renderer's
+    // IPC calls from being processed. Running it via setImmediate defers it
+    // to after the current I/O cycle so the window is interactive immediately.
+    setImmediate(() => generateAlerts())
   })
 
   mainWindow.webContents.setWindowOpenHandler(({ url }) => {
@@ -68,7 +73,7 @@ app.whenReady().then(() => {
   })
 
   initDatabase()
-  generateAlerts()
+  // generateAlerts() moved to ready-to-show to avoid blocking the event loop at startup
 
   registerCertificateHandlers()
   registerClientHandlers()

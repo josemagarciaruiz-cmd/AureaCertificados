@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { format, differenceInDays, parseISO } from 'date-fns'
 import { es } from 'date-fns/locale'
@@ -83,6 +83,7 @@ export default function Dashboard() {
   const [editingValue, setEditingValue] = useState('')
   const [userShortcuts, setUserShortcuts] = useState<UserShortcut[]>([])
   const [launchingShortcut, setLaunchingShortcut] = useState<UserShortcut | null>(null)
+  const launchingShortcutRef = useRef<UserShortcut | null>(null)
   const [shortcutPassword, setShortcutPassword] = useState('')
   const [shortcutError, setShortcutError] = useState('')
   const [shortcutLaunching, setShortcutLaunching] = useState(false)
@@ -163,6 +164,15 @@ export default function Dashboard() {
 
   const daysUntil = (date: string) => differenceInDays(parseISO(date), new Date())
 
+  // Helper que actualiza tanto el ref (lectura síncrona) como el state (re-render)
+  // para evitar stale closures en onKeyDown/onClick de la modal.
+  const openShortcut = (sc: UserShortcut) => {
+    launchingShortcutRef.current = sc
+    setLaunchingShortcut(sc)
+    setShortcutPassword('')
+    setShortcutError('')
+  }
+
   return (
     <div className="space-y-6">
 
@@ -184,9 +194,7 @@ export default function Dashboard() {
                 style={{ borderTop: `2px solid ${sc.color}`, cursor: 'pointer', background: 'var(--color-bg-card)' }}
                 onClick={() => {
                   if (sc.certificate_id) {
-                    setLaunchingShortcut(sc)
-                    setShortcutPassword('')
-                    setShortcutError('')
+                    openShortcut(sc)
                   } else {
                     window.api.shortcuts.recordUse(sc.id)
                     window.api.app.openExternal(sc.url)
@@ -242,15 +250,17 @@ export default function Dashboard() {
                     autoFocus
                     onKeyDown={async (e) => {
                       if (e.key !== 'Enter' || shortcutLaunching || !shortcutPassword.trim()) return
+                      const sc = launchingShortcutRef.current!
                       setShortcutLaunching(true)
                       try {
                         await window.api.certificates.openPortalWithCert({
-                          certId: launchingShortcut.certificate_id!,
-                          url: launchingShortcut.url,
+                          certId: sc.certificate_id!,
+                          url: sc.url,
                           masterPassword: shortcutPassword.trim(),
                         })
-                        window.api.shortcuts.recordUse(launchingShortcut.id)
+                        window.api.shortcuts.recordUse(sc.id)
                         setLaunchingShortcut(null)
+                        launchingShortcutRef.current = null
                       } catch (err: unknown) {
                         setShortcutError(err instanceof Error ? err.message : String(err))
                       } finally {
@@ -270,15 +280,17 @@ export default function Dashboard() {
                       disabled={shortcutLaunching || !shortcutPassword.trim()}
                       onClick={async () => {
                         if (!shortcutPassword.trim()) return
+                        const sc = launchingShortcutRef.current!
                         setShortcutLaunching(true)
                         try {
                           await window.api.certificates.openPortalWithCert({
-                            certId: launchingShortcut.certificate_id!,
-                            url: launchingShortcut.url,
+                            certId: sc.certificate_id!,
+                            url: sc.url,
                             masterPassword: shortcutPassword.trim(),
                           })
-                          window.api.shortcuts.recordUse(launchingShortcut.id)
+                          window.api.shortcuts.recordUse(sc.id)
                           setLaunchingShortcut(null)
+                          launchingShortcutRef.current = null
                         } catch (err: unknown) {
                           setShortcutError(err instanceof Error ? err.message : String(err))
                         } finally {

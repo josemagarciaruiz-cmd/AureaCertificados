@@ -303,14 +303,20 @@ export function registerCertificateHandlers(): void {
 
       win.on('closed', cleanup)
 
-      // Auto-click the certificate access button once DEHU's landing page loads
+      // Auto-click the certificate access button once the portal landing page loads.
+      // The flag prevents re-firing on subsequent navigations (hash changes, AJAX
+      // reloads, SPA transitions) which would create a scroll/click loop on sites
+      // like DEHU or the FNMT renewal wizard.
+      let initialLoadDone = false
       win.webContents.on('did-finish-load', () => {
+        if (initialLoadDone) return
+        initialLoadDone = true
         win.webContents.executeJavaScript(`
           (function() {
-            // DEHU: look for the certificate access link/button and click it
+            // Use specific selectors only — avoid broad href patterns like
+            // a[href*="certificado"] that match navigation menus and breadcrumbs
+            // causing an infinite click→navigate→did-finish-load loop.
             const selectors = [
-              'a[href*="certificado"]',
-              'a[href*="certificate"]',
               'button[id*="cert"]',
               'a[id*="cert"]',
               '[data-id="cert"]',
