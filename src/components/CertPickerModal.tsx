@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { differenceInDays, parseISO } from 'date-fns'
 
 interface Certificate {
@@ -7,7 +7,6 @@ interface Certificate {
   alias: string
   client_name: string
   client_nif: string
-  serial_number: string
   valid_to: string
 }
 
@@ -27,9 +26,14 @@ export default function CertPickerModal({ tramiteName, portalUrl, filterClientId
   const [done, setDone] = useState(false)
   const [error, setError] = useState('')
   const [progress, setProgress] = useState(0)
+  const searchRef = useRef<HTMLInputElement>(null)
 
   useEffect(() => {
-    window.api.certificates.getAll().then((data) => setCerts(data as Certificate[]))
+    // Use lean meta endpoint — avoids loading encrypted_p12 blobs over IPC
+    window.api.certificates.getAllMeta().then((data) => setCerts(data as Certificate[]))
+    // Explicit focus with delay: autoFocus is unreliable in Electron after external focus events
+    const t = setTimeout(() => searchRef.current?.focus(), 80)
+    return () => clearTimeout(t)
   }, [])
 
   const visibleCerts = filterClientId ? certs.filter((c) => c.client_id === filterClientId) : certs
@@ -117,11 +121,11 @@ export default function CertPickerModal({ tramiteName, portalUrl, filterClientId
         {/* Search + password */}
         <div style={{ padding: '1rem 1.5rem 0.75rem', flexShrink: 0 }}>
           <input
+            ref={searchRef}
             className="field-input"
             placeholder="Buscar por alias, cliente, NIF..."
             value={search}
             onChange={(e) => setSearch(e.target.value)}
-            autoFocus
             style={{ marginBottom: '0.6rem' }}
           />
           <input

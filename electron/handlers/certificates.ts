@@ -12,19 +12,52 @@ const execAsync = promisify(exec)
 const ALGORITHM = 'aes-256-gcm'
 
 /**
- * Computes the SHA-1 thumbprint of a certificate from its PEM string.
- * Electron's select-client-certificate event provides Certificate.data as PEM.
- * The result is uppercase hex (no colons), matching PowerShell's thumbprint format.
+ * Computes the SHA-1 thumbprint of a certificate from its DER data.
+ * Handles all formats Electron may provide in Certificate.data:
+ *   – PEM string (-----BEGIN CERTIFICATE-----)
+ *   – Raw binary string (Latin-1 encoded DER bytes)
+ *   – Buffer / Uint8Array (some Electron versions)
+ * Returns uppercase hex without colons, matching PowerShell Thumbprint format.
  */
-function getCertSha1(pemData: string): string {
+function getCertSha1(certData: unknown): string {
   try {
-    const match = pemData.match(/-----BEGIN CERTIFICATE-----\s*([\s\S]+?)\s*-----END CERTIFICATE-----/)
-    if (match) {
-      const der = Buffer.from(match[1].replace(/\s+/g, ''), 'base64')
-      return crypto.createHash('sha1').update(der).digest('hex').toUpperCase()
+    let derBuffer: Buffer
+    if (Buffer.isBuffer(certData)) {
+      derBuffer = certData
+    } else if (certData instanceof Uint8Array) {
+      derBuffer = Buffer.from(certData)
+    } else if (typeof certData === 'string') {
+      const match = certData.match(/-----BEGIN CERTIFICATE-----\s*([\s\S]+?)\s*-----END CERTIFICATE-----/)
+      if (match) {
+        derBuffer = Buffer.from(match[1].replace(/\s+/g, ''), 'base64')
+      } else {
+        derBuffer = Buffer.from(certData, 'binary')
+      }
+    } else {
+      return ''
     }
-    // Fallback: treat as raw binary DER
-    return crypto.createHash('sha1').update(Buffer.from(pemData, 'binary')).digest('hex').toUpperCase()
+    return crypto.createHash('sha1').update(derBuffer).digest('hex').toUpperCase()
+  } catch {
+    return ''
+  }
+}
+
+/**
+ * Extracts the Electron-format SHA-256 fingerprint ("sha256/<base64>") from a
+ * decrypted P12 buffer. This matches Certificate.fingerprint from the
+ * select-client-certificate event exactly, enabling reliable cert selection
+ * without depending on the ambiguous Certificate.data field.
+ */
+function getCertElectronFingerprint(p12Buffer: Buffer, password: string): string {
+  try {
+    const p12Der = forge.util.createBuffer(p12Buffer.toString('binary'))
+    const p12 = forge.pkcs12.pkcs12FromAsn1(forge.asn1.fromDer(p12Der), password)
+    const bags = p12.getBags({ bagType: forge.pki.oids.certBag })
+    const certBags = bags[forge.pki.oids.certBag]
+    if (!certBags?.length) return ''
+    const derBytes = forge.asn1.toDer(forge.pki.certificateToAsn1(certBags[0].cert!)).getBytes()
+    const sha256b64 = crypto.createHash('sha256').update(Buffer.from(derBytes, 'binary')).digest('base64')
+    return `sha256/${sha256b64}`
   } catch {
     return ''
   }
@@ -137,7 +170,8 @@ export function registerCertificateHandlers(): void {
   // Use this wherever only alias + validity info is needed (e.g. dropdowns).
   ipcMain.handle('certificates:getAllMeta', () => {
     return getDb().prepare(`
-      SELECT cert.id, cert.alias, cert.valid_from, cert.valid_to, cert.issuer, cert.subject,
+      SELECT cert.id, cert.client_id, cert.alias, cert.valid_from, cert.valid_to,
+             cert.issuer, cert.subject,
              c.name as client_name, c.nif_cif as client_nif
       FROM certificates cert
       LEFT JOIN clients c ON c.id = cert.client_id
@@ -255,6 +289,11 @@ export function registerCertificateHandlers(): void {
     // 1. Decrypt stored P12 (inner password = masterPassword for re-packaged certs)
     const p12Buffer = decryptP12(dbCert.encrypted_p12, dbCert.iv, dbCert.salt, data.masterPassword)
 
+    // Compute Electron-format SHA-256 fingerprint from the decrypted P12.
+    // This will be used as the PRIMARY cert-selection criterion in select-client-certificate,
+    // matching Certificate.fingerprint directly — far more reliable than parsing c.data.
+    const targetFingerprint = getCertElectronFingerprint(p12Buffer, data.masterPassword)
+
     // 2. Re-package with a random temp password for OS store install
     const tempPass = crypto.randomBytes(16).toString('hex')
     let tempP12: Buffer
@@ -281,10 +320,12 @@ export function registerCertificateHandlers(): void {
       } else if (process.platform === 'darwin' && dbCert.fingerprint) {
         const sha1 = dbCert.fingerprint.replace(/:/g, '')
         const keychainPath = `${homedir()}/Library/Keychains/login.keychain-db`
+        // delete-identity removes cert + private key (identity pair).
+        // Fallback to delete-certificate in case the identity pairing is missing.
         exec(
-          `security delete-certificate -Z '${sha1}' '${keychainPath}'`,
+          `security delete-identity -Z '${sha1}' '${keychainPath}' 2>/dev/null || security delete-certificate -Z '${sha1}' '${keychainPath}' 2>/dev/null`,
           { timeout: 10000 },
-          () => { /* ignore if cert already removed */ }
+          () => { /* ignore if already removed */ }
         )
       }
     }
@@ -321,42 +362,41 @@ export function registerCertificateHandlers(): void {
       win.webContents.on('select-client-certificate', (event, _url, list, callback) => {
         event.preventDefault()
 
-        // Build reference fingerprints from what we know about this specific cert.
-        // winThumbprint: SHA-1 thumbprint returned by PowerShell after import (Windows only).
-        // storedSha1: SHA-1 fingerprint stored in DB at import time (XX:XX:... → XXXXXX...).
+        // ── Strategy 1: Electron's built-in SHA-256 fingerprint ("sha256/<base64>") ──
+        // Computed at call time from the actual decrypted P12 — 100% reliable,
+        // no dependency on the ambiguous c.data format (PEM vs. Buffer vs. binary).
+        if (targetFingerprint) {
+          const match = list.find((c) => c.fingerprint === targetFingerprint)
+          if (match) { callback(match); return }
+        }
+
+        // ── Strategy 2: SHA-1 of c.data (backwards compatibility) ──
+        // winThumbprint: returned by PowerShell after Import-PfxCertificate (Windows).
+        // storedSha1:    stored in DB at import time (XX:XX:... → XXXXXX...).
         const storedSha1 = dbCert.fingerprint
           ? (dbCert.fingerprint as string).replace(/:/g, '').toUpperCase()
           : null
 
-        // Primary matching: SHA-1 of each candidate cert's DER data.
-        // This is the most reliable method and avoids serial-number formatting differences
-        // between node-forge and Chromium on Windows.
-        let match = list.find((c) => {
-          const sha1 = getCertSha1(c.data as unknown as string)
+        const matchSha1 = list.find((c) => {
+          const sha1 = getCertSha1(c.data)
           if (!sha1) return false
-          if (winThumbprint && sha1 === winThumbprint) return true   // Windows: exact thumbprint
-          if (storedSha1 && sha1 === storedSha1) return true         // All platforms: stored SHA-1
+          if (winThumbprint && sha1 === winThumbprint) return true
+          if (storedSha1 && sha1 === storedSha1) return true
           return false
         })
+        if (matchSha1) { callback(matchSha1); return }
 
-        // Secondary fallback: serial number comparison (kept for certs imported before
-        // fingerprint storage was added, or if SHA-1 computation fails).
-        if (!match) {
-          const targetSerial = (dbCert.serial_number as string)?.toLowerCase().replace(/^0+/, '')
-          match = list.find((c) =>
-            c.serialNumber?.toLowerCase().replace(/^0+/, '') === targetSerial
-          )
-        }
+        // ── Strategy 3: serial number (last resort, kept for certs imported before
+        //    fingerprint storage was added or when SHA-1 computation fails) ──
+        const targetSerial = (dbCert.serial_number as string)?.toLowerCase().replace(/^0+/, '')
+        const matchSerial = list.find((c) =>
+          c.serialNumber?.toLowerCase().replace(/^0+/, '') === targetSerial
+        )
+        if (matchSerial) { callback(matchSerial); return }
 
-        // If we still cannot identify the correct cert, reject rather than silently
-        // picking list[0] which could be a completely unrelated certificate.
-        if (!match) {
-          console.error(`[ÁureaCert] select-client-certificate: no match found for cert id=${data.certId} (${dbCert.alias}). Rejecting to avoid using wrong cert.`)
-          callback(undefined as unknown as Electron.Certificate)
-          return
-        }
-
-        callback(match)
+        // No match found — reject rather than silently using a wrong cert.
+        console.error(`[ÁureaCert] select-client-certificate: no match for cert id=${data.certId} (${dbCert.alias}). targetFingerprint=${targetFingerprint} list=${list.map(c => c.fingerprint).join(', ')}`)
+        callback(undefined as unknown as Electron.Certificate)
       })
 
       // Prevent any portal page from blocking the window close with a beforeunload dialog
