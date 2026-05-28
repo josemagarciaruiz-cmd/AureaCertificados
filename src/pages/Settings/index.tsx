@@ -20,6 +20,8 @@ export default function Settings() {
   const [saved, setSaved] = useState(false)
   const [activeTab, setActiveTab] = useState<'despacho' | 'smtp' | 'security'>('despacho')
 
+  const [cleaningCache, setCleaningCache] = useState(false)
+  const [cleanCacheMsg, setCleanCacheMsg] = useState('')
   const [hasLockPassword, setHasLockPassword] = useState(false)
   const [lockPwdMode, setLockPwdMode] = useState<'idle' | 'set' | 'change' | 'remove'>('idle')
   const [lockPwdFields, setLockPwdFields] = useState({ current: '', new: '', confirm: '' })
@@ -51,6 +53,20 @@ export default function Settings() {
       setTimeout(() => setSaved(false), 3000)
     } finally {
       setSaving(false)
+    }
+  }
+
+  const handleCleanCache = async () => {
+    setCleaningCache(true)
+    setCleanCacheMsg('')
+    try {
+      const result = await window.api.certificates.cleanOsStore() as { cleaned: number }
+      setCleanCacheMsg(`✓ ${result.cleaned} certificado${result.cleaned !== 1 ? 's' : ''} eliminado${result.cleaned !== 1 ? 's' : ''} del almacén del sistema`)
+    } catch {
+      setCleanCacheMsg('Error al limpiar el almacén')
+    } finally {
+      setCleaningCache(false)
+      setTimeout(() => setCleanCacheMsg(''), 6000)
     }
   }
 
@@ -361,6 +377,34 @@ export default function Settings() {
                     </button>
                   </div>
                 </div>
+              )}
+            </div>
+          </div>
+
+          <div className="card p-6">
+            <div className="kicker mb-2" style={{ fontSize: '9px' }}>Almacén del sistema operativo</div>
+            <p style={{ fontSize: '12px', color: 'var(--color-text-muted)', lineHeight: 1.8, marginBottom: '1rem' }}>
+              Al abrir trámites, la app instala el certificado temporalmente en el almacén del sistema (Windows/macOS) y lo elimina al cerrar la ventana.
+              Si un trámite se interrumpe o la app se cierra inesperadamente, pueden quedar certificados residuales que interfieran en el siguiente acceso.
+              Usa este botón si un acceso directo sigue usando un certificado antiguo o ya eliminado.
+            </p>
+            <div className="flex items-center gap-3 flex-wrap">
+              <button
+                className="btn-secondary"
+                style={{ fontSize: '11px' }}
+                disabled={cleaningCache}
+                onClick={handleCleanCache}
+              >
+                {cleaningCache ? 'Limpiando...' : '🧹 Limpiar caché de certificados del sistema'}
+              </button>
+              {cleanCacheMsg && (
+                <span style={{
+                  fontSize: '11px',
+                  color: cleanCacheMsg.startsWith('✓') ? 'var(--color-success, #34d399)' : 'var(--color-danger, #ef4444)',
+                  fontFamily: 'var(--font-mono)',
+                }}>
+                  {cleanCacheMsg}
+                </span>
               )}
             </div>
           </div>

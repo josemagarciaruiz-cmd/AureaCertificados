@@ -151,6 +151,76 @@ function repackageP12(buffer: Buffer, originalPassword: string, newPassword: str
   return Buffer.from(forge.asn1.toDer(newP12Asn1).getBytes(), 'binary')
 }
 
+/**
+ * Removes from the OS certificate store all certificates that are stored in
+ * the app's database (identified by their SHA-1 fingerprint).
+ *
+ * This must be called:
+ *   1. At app startup (non-blocking) — clears residues from crashed sessions.
+ *   2. Before each openPortalWithCert — ensures only the intended cert is in
+ *      the OS store when the portal window opens (critical for sites that read
+ *      certs directly from the OS store via JS rather than via TLS handshake).
+ *   3. On demand via the "Limpiar caché" button in Settings.
+ *
+ * Errors are silently ignored so the app continues regardless.
+ */
+export async function cleanOsStore(): Promise<{ cleaned: number }> {
+  try {
+    const rows = getDb().prepare(
+      "SELECT fingerprint FROM certificates WHERE fingerprint IS NOT NULL AND fingerprint != ''"
+    ).all() as { fingerprint: string }[]
+
+    const sha1s = rows
+      .map((r) => r.fingerprint.replace(/:/g, '').toUpperCase())
+      .filter(Boolean)
+
+    if (sha1s.length === 0) return { cleaned: 0 }
+
+    if (process.platform === 'win32') {
+      const thumbprintList = sha1s.map((t) => `'${t}'`).join(',')
+      const psScript = `
+$tps = @(${thumbprintList})
+$count = 0
+foreach ($tp in $tps) {
+  $cert = Get-Item "Cert:\\CurrentUser\\My\\$tp" -ErrorAction SilentlyContinue
+  if ($cert) {
+    Remove-Item "Cert:\\CurrentUser\\My\\$tp" -DeleteKey -ErrorAction SilentlyContinue
+    $count++
+  }
+}
+Write-Output $count
+`
+      try {
+        const psEncoded = Buffer.from(psScript, 'utf16le').toString('base64')
+        const { stdout } = await execAsync(
+          `powershell -NonInteractive -EncodedCommand ${psEncoded}`,
+          { encoding: 'utf8', timeout: 30000 }
+        )
+        return { cleaned: parseInt(stdout.trim(), 10) || 0 }
+      } catch {
+        return { cleaned: 0 }
+      }
+    }
+
+    if (process.platform === 'darwin') {
+      const keychainPath = `${homedir()}/Library/Keychains/login.keychain-db`
+      let cleaned = 0
+      for (const sha1 of sha1s) {
+        try {
+          await execAsync(
+            `security delete-identity -Z '${sha1}' '${keychainPath}' 2>/dev/null || security delete-certificate -Z '${sha1}' '${keychainPath}' 2>/dev/null`,
+            { timeout: 5000 }
+          )
+          cleaned++
+        } catch { /* not in keychain — ignore */ }
+      }
+      return { cleaned }
+    }
+  } catch { /* DB not ready or other error */ }
+
+  return { cleaned: 0 }
+}
+
 export function registerCertificateHandlers(): void {
   ipcMain.handle('certificates:parseP12', (_, filePath: string, password: string) => {
     const buffer = readFileSync(filePath)
@@ -285,6 +355,15 @@ export function registerCertificateHandlers(): void {
     `).get(data.certId) as Record<string, string> | undefined
 
     if (!dbCert) throw new Error('Certificado no encontrado')
+
+    // 0. Pre-cleanup: remove any certs from the OS store that belong to this app.
+    //    Many Spanish gov portals read certs directly from the OS store via JS (not via
+    //    TLS handshake), so stale certs from previous sessions would be picked up.
+    //    We race with a 4s timeout to avoid blocking the UI for too long.
+    await Promise.race([
+      cleanOsStore(),
+      new Promise<void>((r) => setTimeout(r, 4000)),
+    ])
 
     // 1. Decrypt stored P12 (inner password = masterPassword for re-packaged certs)
     const p12Buffer = decryptP12(dbCert.encrypted_p12, dbCert.iv, dbCert.salt, data.masterPassword)
@@ -445,6 +524,10 @@ export function registerCertificateHandlers(): void {
       cleanup()
       throw err
     }
+  })
+
+  ipcMain.handle('certificates:cleanOsStore', async () => {
+    return cleanOsStore()
   })
 
   ipcMain.handle('certificates:scanOsStore', async () => {

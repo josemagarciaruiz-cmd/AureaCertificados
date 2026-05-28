@@ -2,7 +2,7 @@ import { app, BrowserWindow, ipcMain, shell, dialog } from 'electron'
 import { join } from 'path'
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
 import { initDatabase } from './handlers/database'
-import { registerCertificateHandlers } from './handlers/certificates'
+import { registerCertificateHandlers, cleanOsStore } from './handlers/certificates'
 import { registerClientHandlers } from './handlers/clients'
 import { registerProcedureHandlers } from './handlers/procedures'
 import { registerCalendarHandlers } from './handlers/calendar'
@@ -37,7 +37,12 @@ function createWindow(): void {
     // Node event loop for hundreds of milliseconds, preventing the renderer's
     // IPC calls from being processed. Running it via setImmediate defers it
     // to after the current I/O cycle so the window is interactive immediately.
-    setImmediate(() => generateAlerts())
+    setImmediate(async () => {
+      generateAlerts()
+      // Remove any stale certs left in the OS store from previous sessions
+      // (crashed windows, failed cleanups, reinstalls, etc.)
+      try { await cleanOsStore() } catch { /* non-blocking — ignore */ }
+    })
   })
 
   mainWindow.webContents.setWindowOpenHandler(({ url }) => {

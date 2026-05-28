@@ -28,6 +28,7 @@ const api = {
     openBatchPortal: (data: { certs: Array<{ id: number; serialNumber: string; alias: string }>; url: string }) =>
       ipcRenderer.invoke('certificates:openBatchPortal', data),
     scanOsStore: () => ipcRenderer.invoke('certificates:scanOsStore'),
+    cleanOsStore: () => ipcRenderer.invoke('certificates:cleanOsStore'),
     importFromOsStore: (data: { thumbprint: string; alias: string; clientId: number | null; masterPassword: string }) =>
       ipcRenderer.invoke('certificates:importFromOsStore', data),
     parseP12: (filePath: string, password: string) =>
