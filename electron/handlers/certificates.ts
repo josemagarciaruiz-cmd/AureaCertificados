@@ -448,17 +448,19 @@ export function registerCertificateHandlers(): void {
           `powershell -NonInteractive -EncodedCommand ${psImportEncoded}`,
           { encoding: 'utf8', timeout: 30000 }
         )
-        if (psErr?.trim()) {
-          try {
-            const { appendFileSync } = require('fs')
-            const { join: pathJoin } = require('path')
-            const { app: electronApp } = require('electron')
-            appendFileSync(
-              pathJoin(electronApp.getPath('userData'), 'cert_debug.log'),
-              `[${new Date().toISOString()}] Import stderr:\n${psErr}\nstdout:${psOut}\n---\n`
-            )
-          } catch { /* non-blocking */ }
-        }
+        // ── Diagnostic log — always written so we can inspect what happened ──
+        try {
+          const { appendFileSync: _afs } = require('fs')
+          const { join: _pj } = require('path')
+          const { app: _app } = require('electron')
+          _afs(
+            _pj(_app.getPath('userData'), 'cert_debug.log'),
+            `[${new Date().toISOString()}] IMPORT-PFXCERTIFICATE\n` +
+            `  certId : ${data.certId}\n` +
+            `  stdout : ${psOut?.trim() || '(empty)'}\n` +
+            `  stderr : ${psErr?.trim() || '(none)'}\n`
+          )
+        } catch { /* non-blocking */ }
         // PowerShell can output warnings, BOM or blank lines before the thumbprint.
         // Extract the first 40-char uppercase hex token to be robust against that noise.
         winThumbprint = (psOut.match(/[0-9A-Fa-f]{40}/)?.[0] ?? '').toUpperCase()
@@ -520,6 +522,24 @@ export function registerCertificateHandlers(): void {
       win.webContents.on('select-client-certificate', (event, _url, list, callback) => {
         event.preventDefault()
 
+        // ── Diagnostic log ──
+        try {
+          const { appendFileSync: _afs } = require('fs')
+          const { join: _pj } = require('path')
+          const { app: _app } = require('electron')
+          _afs(
+            _pj(_app.getPath('userData'), 'cert_debug.log'),
+            `[${new Date().toISOString()}] SELECT-CLIENT-CERTIFICATE\n` +
+            `  url           : ${_url}\n` +
+            `  winThumbprint : ${winThumbprint || '(empty)'}\n` +
+            `  winCertFP     : ${winCertFingerprint || '(empty)'}\n` +
+            `  winSerial     : ${winSerialNumber || '(empty)'}\n` +
+            `  targetFP      : ${targetFingerprint || '(empty)'}\n` +
+            `  list.length   : ${list.length}\n` +
+            list.map((c, i) => `  cert[${i}] fp=${c.fingerprint} serial=${c.serialNumber} subj=${c.subjectName}`).join('\n') + '\n'
+          )
+        } catch { /* non-blocking */ }
+
         // ── Strategy 1: SHA-256 fingerprint from the cert DER bytes installed in Windows ──
         // winCertFingerprint is computed by exporting the cert from the OS store after
         // Import-PfxCertificate — it is guaranteed to match Certificate.fingerprint exactly.
@@ -558,8 +578,15 @@ export function registerCertificateHandlers(): void {
           if (matchSerial) { callback(matchSerial); return }
         }
 
-        // No match found — cancel the TLS handshake cleanly so the portal shows a visible
-        // error instead of silently authenticating with a wrong certificate.
+        // No match found — log and cancel
+        try {
+          const { appendFileSync: _afs } = require('fs')
+          const { join: _pj } = require('path')
+          const { app: _app } = require('electron')
+          _afs(_pj(_app.getPath('userData'), 'cert_debug.log'),
+            `[${new Date().toISOString()}] NO MATCH — all strategies failed\n`)
+        } catch { /* non-blocking */ }
+
         console.error(
           `[ÁureaCert] select-client-certificate: no match for cert id=${data.certId} (${dbCert.alias}).`,
           `targetFingerprint=${targetFingerprint} winSerial=${winSerialNumber}`,
