@@ -407,6 +407,9 @@ export function registerCertificateHandlers(): void {
     // Serial number obtained directly from PowerShell after installation — 100 % reliable match
     // because it comes from the same OS object Chromium reads in select-client-certificate.
     let winSerialNumber = ''
+    // SHA-256 fingerprint computed from the cert DER bytes in the Windows store — bypasses
+    // forge and matches Certificate.fingerprint in select-client-certificate exactly.
+    let winCertFingerprint = ''
 
     // Non-blocking cleanup: runs fire-and-forget so closing the window never freezes the UI
     const cleanup = () => {
@@ -437,7 +440,9 @@ export function registerCertificateHandlers(): void {
           `powershell -Command "$pwd = ConvertTo-SecureString -String '${tempPass}' -Force -AsPlainText; $cert = Import-PfxCertificate -FilePath '${tempPath.replace(/\\/g, '\\\\')}' -CertStoreLocation Cert:\\CurrentUser\\My -Password $pwd -Exportable; Write-Output $cert.Thumbprint"`,
           { encoding: 'utf8', timeout: 30000 }
         )
-        winThumbprint = psOut.trim()
+        // PowerShell can output warnings, BOM or blank lines before the thumbprint.
+        // Extract the first 40-char uppercase hex token to be robust against that noise.
+        winThumbprint = (psOut.match(/[0-9A-Fa-f]{40}/)?.[0] ?? '').toUpperCase()
 
         if (winThumbprint) {
           // Persist the installed thumbprint so cleanOsStore() can remove it in future sessions
@@ -445,12 +450,11 @@ export function registerCertificateHandlers(): void {
           try {
             getDb().prepare(
               'INSERT OR REPLACE INTO installed_cert_thumbprints (thumbprint, cert_id) VALUES (?, ?)'
-            ).run(winThumbprint.toUpperCase(), data.certId)
+            ).run(winThumbprint, data.certId)
           } catch { /* non-blocking */ }
 
           // Get serial number directly from Windows — exact same value Chromium reports
-          // in Certificate.serialNumber inside select-client-certificate. This makes
-          // Strategy 3 a 100 % reliable fallback when SHA-256 fingerprint matching fails.
+          // in Certificate.serialNumber inside select-client-certificate.
           try {
             const { stdout: serialOut } = await execAsync(
               `powershell -NonInteractive -Command "(Get-Item 'Cert:\\CurrentUser\\My\\${winThumbprint}').SerialNumber"`,
@@ -458,6 +462,19 @@ export function registerCertificateHandlers(): void {
             )
             winSerialNumber = serialOut.trim().toLowerCase()
           } catch { /* use DB serial as fallback */ }
+
+          // Compute Electron-format SHA-256 fingerprint ("sha256/<base64>") directly from
+          // the cert DER bytes in the Windows store — bypasses forge parsing entirely and
+          // is 100 % guaranteed to match Certificate.fingerprint in select-client-certificate.
+          try {
+            const { stdout: b64Out } = await execAsync(
+              `powershell -NonInteractive -Command "$c = Get-Item 'Cert:\\CurrentUser\\My\\${winThumbprint}'; [System.Convert]::ToBase64String($c.Export([System.Security.Cryptography.X509Certificates.X509ContentType]::Cert))"`,
+              { encoding: 'utf8', timeout: 10000 }
+            )
+            const derBuffer = Buffer.from(b64Out.trim(), 'base64')
+            const sha256b64 = crypto.createHash('sha256').update(derBuffer).digest('base64')
+            winCertFingerprint = `sha256/${sha256b64}`
+          } catch { /* keep forge-based targetFingerprint as fallback */ }
         }
       } else if (process.platform === 'darwin') {
         const keychainPath = `${homedir()}/Library/Keychains/login.keychain-db`
@@ -469,8 +486,9 @@ export function registerCertificateHandlers(): void {
         } catch { /* may warn but cert is imported */ }
       }
 
-      // Small delay so the OS cert store change is visible to Chromium
-      await new Promise<void>((r) => setTimeout(r, 400))
+      // Give Chromium time to pick up the updated OS cert store.
+      // 400 ms was too short on some systems — 1200 ms is safer.
+      await new Promise<void>((r) => setTimeout(r, 1200))
 
       // 4. Open browser window with isolated session so Chromium never reuses a cached cert
       const win = new BrowserWindow({
@@ -483,11 +501,13 @@ export function registerCertificateHandlers(): void {
       win.webContents.on('select-client-certificate', (event, _url, list, callback) => {
         event.preventDefault()
 
-        // ── Strategy 1: Electron's built-in SHA-256 fingerprint ("sha256/<base64>") ──
-        // Computed at call time from the actual decrypted P12 — 100% reliable,
-        // no dependency on the ambiguous c.data format (PEM vs. Buffer vs. binary).
-        if (targetFingerprint) {
-          const match = list.find((c) => c.fingerprint === targetFingerprint)
+        // ── Strategy 1: SHA-256 fingerprint from the cert DER bytes installed in Windows ──
+        // winCertFingerprint is computed by exporting the cert from the OS store after
+        // Import-PfxCertificate — it is guaranteed to match Certificate.fingerprint exactly.
+        // targetFingerprint (forge-based) is the fallback in case the PS export failed.
+        const fpToMatch = winCertFingerprint || targetFingerprint
+        if (fpToMatch) {
+          const match = list.find((c) => c.fingerprint === fpToMatch)
           if (match) { callback(match); return }
         }
 
