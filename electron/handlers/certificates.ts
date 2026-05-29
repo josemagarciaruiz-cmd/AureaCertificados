@@ -436,10 +436,29 @@ export function registerCertificateHandlers(): void {
     try {
       // 3. Install to OS cert store (async — never blocks main process)
       if (process.platform === 'win32') {
-        const { stdout: psOut } = await execAsync(
-          `powershell -Command "$certPwd = ConvertTo-SecureString -String '${tempPass}' -Force -AsPlainText; $cert = Import-PfxCertificate -FilePath '${tempPath.replace(/\\/g, '\\\\')}' -CertStoreLocation Cert:\\CurrentUser\\My -Password $certPwd -Exportable; Write-Output $cert.Thumbprint"`,
+        // Use -EncodedCommand (base64 UTF-16LE) to avoid ALL cmd.exe quoting issues.
+        // -Command "..." caused variables like $certPwd to be stripped by the shell layer.
+        const psImportScript = [
+          `$certPwd = ConvertTo-SecureString -String '${tempPass}' -Force -AsPlainText`,
+          `$cert = Import-PfxCertificate -FilePath '${tempPath}' -CertStoreLocation Cert:\\CurrentUser\\My -Password $certPwd -Exportable`,
+          `Write-Output $cert.Thumbprint`
+        ].join('\n')
+        const psImportEncoded = Buffer.from(psImportScript, 'utf16le').toString('base64')
+        const { stdout: psOut, stderr: psErr } = await execAsync(
+          `powershell -NonInteractive -EncodedCommand ${psImportEncoded}`,
           { encoding: 'utf8', timeout: 30000 }
         )
+        if (psErr?.trim()) {
+          try {
+            const { appendFileSync } = require('fs')
+            const { join: pathJoin } = require('path')
+            const { app: electronApp } = require('electron')
+            appendFileSync(
+              pathJoin(electronApp.getPath('userData'), 'cert_debug.log'),
+              `[${new Date().toISOString()}] Import stderr:\n${psErr}\nstdout:${psOut}\n---\n`
+            )
+          } catch { /* non-blocking */ }
+        }
         // PowerShell can output warnings, BOM or blank lines before the thumbprint.
         // Extract the first 40-char uppercase hex token to be robust against that noise.
         winThumbprint = (psOut.match(/[0-9A-Fa-f]{40}/)?.[0] ?? '').toUpperCase()
