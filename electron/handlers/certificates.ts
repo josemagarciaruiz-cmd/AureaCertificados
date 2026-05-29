@@ -166,18 +166,33 @@ function repackageP12(buffer: Buffer, originalPassword: string, newPassword: str
  */
 export async function cleanOsStore(): Promise<{ cleaned: number }> {
   try {
+    // --- Source 1: SHA-1 fingerprints stored in the certificates table ---
     const rows = getDb().prepare(
       "SELECT fingerprint FROM certificates WHERE fingerprint IS NOT NULL AND fingerprint != ''"
     ).all() as { fingerprint: string }[]
 
-    const sha1s = rows
+    const sha1sFromDb = rows
       .map((r) => r.fingerprint.replace(/:/g, '').toUpperCase())
       .filter(Boolean)
 
-    if (sha1s.length === 0) return { cleaned: 0 }
+    // --- Source 2: Thumbprints the app installed in previous sessions ---
+    // This catches certs that are NO LONGER in the DB (deleted, imported from OS store, etc.)
+    // and certs from sessions that crashed before the cleanup callback ran.
+    let trackedThumbs: string[] = []
+    try {
+      const trackedRows = getDb().prepare(
+        'SELECT thumbprint FROM installed_cert_thumbprints'
+      ).all() as { thumbprint: string }[]
+      trackedThumbs = trackedRows.map((r) => r.thumbprint.toUpperCase()).filter(Boolean)
+    } catch { /* table may not exist in older DB files — ignore */ }
+
+    // Merge and deduplicate
+    const allThumbs = [...new Set([...sha1sFromDb, ...trackedThumbs])]
+
+    if (allThumbs.length === 0) return { cleaned: 0 }
 
     if (process.platform === 'win32') {
-      const thumbprintList = sha1s.map((t) => `'${t}'`).join(',')
+      const thumbprintList = allThumbs.map((t) => `'${t}'`).join(',')
       const psScript = `
 $tps = @(${thumbprintList})
 $count = 0
@@ -196,6 +211,8 @@ Write-Output $count
           `powershell -NonInteractive -EncodedCommand ${psEncoded}`,
           { encoding: 'utf8', timeout: 30000 }
         )
+        // Clear the tracking table — all installed thumbprints have been removed
+        try { getDb().prepare('DELETE FROM installed_cert_thumbprints').run() } catch { /* ignore */ }
         return { cleaned: parseInt(stdout.trim(), 10) || 0 }
       } catch {
         return { cleaned: 0 }
@@ -205,7 +222,7 @@ Write-Output $count
     if (process.platform === 'darwin') {
       const keychainPath = `${homedir()}/Library/Keychains/login.keychain-db`
       let cleaned = 0
-      for (const sha1 of sha1s) {
+      for (const sha1 of allThumbs) {
         try {
           await execAsync(
             `security delete-identity -Z '${sha1}' '${keychainPath}' 2>/dev/null || security delete-certificate -Z '${sha1}' '${keychainPath}' 2>/dev/null`,
@@ -214,6 +231,7 @@ Write-Output $count
           cleaned++
         } catch { /* not in keychain — ignore */ }
       }
+      try { getDb().prepare('DELETE FROM installed_cert_thumbprints').run() } catch { /* ignore */ }
       return { cleaned }
     }
   } catch { /* DB not ready or other error */ }
@@ -386,6 +404,9 @@ export function registerCertificateHandlers(): void {
     writeFileSync(tempPath, tempP12)
 
     let winThumbprint = ''
+    // Serial number obtained directly from PowerShell after installation — 100 % reliable match
+    // because it comes from the same OS object Chromium reads in select-client-certificate.
+    let winSerialNumber = ''
 
     // Non-blocking cleanup: runs fire-and-forget so closing the window never freezes the UI
     const cleanup = () => {
@@ -417,6 +438,27 @@ export function registerCertificateHandlers(): void {
           { encoding: 'utf8', timeout: 30000 }
         )
         winThumbprint = psOut.trim()
+
+        if (winThumbprint) {
+          // Persist the installed thumbprint so cleanOsStore() can remove it in future sessions
+          // even if this session crashes before the cleanup callback runs.
+          try {
+            getDb().prepare(
+              'INSERT OR REPLACE INTO installed_cert_thumbprints (thumbprint, cert_id) VALUES (?, ?)'
+            ).run(winThumbprint.toUpperCase(), data.certId)
+          } catch { /* non-blocking */ }
+
+          // Get serial number directly from Windows — exact same value Chromium reports
+          // in Certificate.serialNumber inside select-client-certificate. This makes
+          // Strategy 3 a 100 % reliable fallback when SHA-256 fingerprint matching fails.
+          try {
+            const { stdout: serialOut } = await execAsync(
+              `powershell -NonInteractive -Command "(Get-Item 'Cert:\\CurrentUser\\My\\${winThumbprint}').SerialNumber"`,
+              { encoding: 'utf8', timeout: 10000 }
+            )
+            winSerialNumber = serialOut.trim().toLowerCase()
+          } catch { /* use DB serial as fallback */ }
+        }
       } else if (process.platform === 'darwin') {
         const keychainPath = `${homedir()}/Library/Keychains/login.keychain-db`
         try {
@@ -465,17 +507,26 @@ export function registerCertificateHandlers(): void {
         })
         if (matchSha1) { callback(matchSha1); return }
 
-        // ── Strategy 3: serial number (last resort, kept for certs imported before
-        //    fingerprint storage was added or when SHA-1 computation fails) ──
-        const targetSerial = (dbCert.serial_number as string)?.toLowerCase().replace(/^0+/, '')
-        const matchSerial = list.find((c) =>
-          c.serialNumber?.toLowerCase().replace(/^0+/, '') === targetSerial
-        )
-        if (matchSerial) { callback(matchSerial); return }
+        // ── Strategy 3: serial number ──
+        // winSerialNumber comes directly from PowerShell after Install-PfxCertificate —
+        // it is the exact hex string Chromium uses in Certificate.serialNumber, so this
+        // match is 100 % reliable when Strategies 1 & 2 fail (e.g. forge parsing issues,
+        // unreliable c.data format, or missing fingerprint in older DB records).
+        const normalize = (s?: string) => (s ?? '').toLowerCase().replace(/^0+/, '')
+        const targetSerial = normalize(winSerialNumber) || normalize(dbCert.serial_number as string)
+        if (targetSerial) {
+          const matchSerial = list.find((c) => normalize(c.serialNumber) === targetSerial)
+          if (matchSerial) { callback(matchSerial); return }
+        }
 
-        // No match found — reject rather than silently using a wrong cert.
-        console.error(`[ÁureaCert] select-client-certificate: no match for cert id=${data.certId} (${dbCert.alias}). targetFingerprint=${targetFingerprint} list=${list.map(c => c.fingerprint).join(', ')}`)
-        callback(undefined as unknown as Electron.Certificate)
+        // No match found — cancel the TLS handshake cleanly so the portal shows a visible
+        // error instead of silently authenticating with a wrong certificate.
+        console.error(
+          `[ÁureaCert] select-client-certificate: no match for cert id=${data.certId} (${dbCert.alias}).`,
+          `targetFingerprint=${targetFingerprint} winSerial=${winSerialNumber}`,
+          `list=${list.map((c) => `${c.fingerprint}|${c.serialNumber}`).join(', ')}`
+        )
+        callback()  // undefined arg = cancel — do NOT cast to Certificate (causes wrong cert selection)
       })
 
       // Prevent any portal page from blocking the window close with a beforeunload dialog

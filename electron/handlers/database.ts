@@ -43,6 +43,17 @@ function runMigrations(): void {
     );
     CREATE INDEX IF NOT EXISTS idx_shortcuts_use_count ON shortcuts(use_count DESC);
   `)
+
+  // Track thumbprints of certs installed by the app in the OS store.
+  // cleanOsStore() uses this to remove them even if they are no longer in the certificates table
+  // (e.g. certs from previous sessions that crashed before cleanup, or certs deleted from the DB).
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS installed_cert_thumbprints (
+      thumbprint TEXT PRIMARY KEY,
+      cert_id    INTEGER REFERENCES certificates(id) ON DELETE SET NULL,
+      installed_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+  `)
 }
 
 function createTables(): void {
