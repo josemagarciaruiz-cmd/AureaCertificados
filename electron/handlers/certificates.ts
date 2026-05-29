@@ -1,4 +1,4 @@
-import { ipcMain, BrowserWindow } from 'electron'
+import { app, ipcMain, BrowserWindow, session } from 'electron'
 import { getDb } from './database'
 import * as forge from 'node-forge'
 import * as crypto from 'crypto'
@@ -511,15 +511,29 @@ export function registerCertificateHandlers(): void {
       // 400 ms was too short on some systems — 1200 ms is safer.
       await new Promise<void>((r) => setTimeout(r, 1200))
 
-      // 4. Open browser window with isolated session so Chromium never reuses a cached cert
-      const win = new BrowserWindow({
-        width: 1280,
-        height: 900,
-        title: `${dbCert.alias} — ÁureaCert`,
-        webPreferences: { sandbox: true, partition: `cert-${data.certId}-${Date.now()}` },
-      })
+      // 4. Open browser window with an isolated session.
+      //    CRITICAL FIX: intercept select-client-certificate at the APP level, scoped to
+      //    this portal's session. The event is emitted by `app` (for EVERY webContents)
+      //    and by individual webContents — but NOT by Session. Spanish gov portals (TGSS,
+      //    Cl@ve, FNMT) frequently perform the certificate-authenticated request inside a
+      //    POPUP or after a cross-origin redirect — a separate webContents that would not
+      //    inherit a per-webContents listener, so Chromium fell back to auto-selecting the
+      //    FIRST cert in the OS store. An app-level listener, filtered by session, governs
+      //    the main window AND every popup/subframe that shares this partition.
+      const partition = `cert-${data.certId}-${Date.now()}`
+      const portalSession = session.fromPartition(partition)
 
-      win.webContents.on('select-client-certificate', (event, _url, list, callback) => {
+      const selectCertHandler = (
+        event: Electron.Event,
+        eventWebContents: Electron.WebContents,
+        _url: string,
+        list: Electron.Certificate[],
+        callback: (certificate?: Electron.Certificate) => void
+      ): void => {
+        // Only handle requests from THIS portal's session; let every other window
+        // (including the main app window) keep Chromium's default behaviour.
+        if (eventWebContents.session !== portalSession) return
+
         event.preventDefault()
 
         // ── Diagnostic log ──
@@ -592,15 +606,41 @@ export function registerCertificateHandlers(): void {
           `targetFingerprint=${targetFingerprint} winSerial=${winSerialNumber}`,
           `list=${list.map((c) => `${c.fingerprint}|${c.serialNumber}`).join(', ')}`
         )
-        callback()  // undefined arg = cancel — do NOT cast to Certificate (causes wrong cert selection)
+        // Cancel: decline the handshake instead of sending a wrong certificate.
+        callback()
+      }
+
+      // Register at APP level (covers main window, popups and cross-origin navigations);
+      // the handler itself filters by session so only this portal is affected.
+      app.on('select-client-certificate', selectCertHandler)
+
+      const win = new BrowserWindow({
+        width: 1280,
+        height: 900,
+        title: `${dbCert.alias} — ÁureaCert`,
+        webPreferences: { sandbox: true, partition },
       })
+
+      // Keep any popup the portal opens INSIDE the same partition/session, so the
+      // app-level interceptor above also governs its TLS client-certificate request.
+      win.webContents.setWindowOpenHandler(() => ({
+        action: 'allow',
+        overrideBrowserWindowOptions: {
+          width: 1280,
+          height: 900,
+          webPreferences: { sandbox: true, partition },
+        },
+      }))
 
       // Prevent any portal page from blocking the window close with a beforeunload dialog
       win.webContents.on('will-prevent-unload', (event) => {
         event.preventDefault()
       })
 
-      win.on('closed', cleanup)
+      win.on('closed', () => {
+        try { app.removeListener('select-client-certificate', selectCertHandler) } catch { /* ignore */ }
+        cleanup()
+      })
 
       // Auto-click the certificate access button once the portal landing page loads.
       // The flag prevents re-firing on subsequent navigations (hash changes, AJAX
