@@ -437,7 +437,7 @@ export function registerCertificateHandlers(): void {
       // 3. Install to OS cert store (async — never blocks main process)
       if (process.platform === 'win32') {
         const { stdout: psOut } = await execAsync(
-          `powershell -Command "$pwd = ConvertTo-SecureString -String '${tempPass}' -Force -AsPlainText; $cert = Import-PfxCertificate -FilePath '${tempPath.replace(/\\/g, '\\\\')}' -CertStoreLocation Cert:\\CurrentUser\\My -Password $pwd -Exportable; Write-Output $cert.Thumbprint"`,
+          `powershell -Command "$certPwd = ConvertTo-SecureString -String '${tempPass}' -Force -AsPlainText; $cert = Import-PfxCertificate -FilePath '${tempPath.replace(/\\/g, '\\\\')}' -CertStoreLocation Cert:\\CurrentUser\\My -Password $certPwd -Exportable; Write-Output $cert.Thumbprint"`,
           { encoding: 'utf8', timeout: 30000 }
         )
         // PowerShell can output warnings, BOM or blank lines before the thumbprint.
