@@ -1,4 +1,4 @@
-import { app, ipcMain, BrowserWindow, session } from 'electron'
+import { app, ipcMain, BrowserWindow, session, dialog, shell } from 'electron'
 import { getDb } from './database'
 import * as forge from 'node-forge'
 import * as crypto from 'crypto'
@@ -618,19 +618,41 @@ export function registerCertificateHandlers(): void {
         width: 1280,
         height: 900,
         title: `${dbCert.alias} — ÁureaCert`,
-        webPreferences: { sandbox: true, partition },
+        // plugins:true enables Chromium's built-in PDF viewer (PDFium). Without it,
+        // PDFs served inline (e.g. TGSS resolutions) open as a BLANK page. Required
+        // both here and on popups below.
+        webPreferences: { sandbox: true, partition, plugins: true },
       })
 
       // Keep any popup the portal opens INSIDE the same partition/session, so the
       // app-level interceptor above also governs its TLS client-certificate request.
+      // plugins:true is repeated so PDF resolutions opened in a popup also render.
       win.webContents.setWindowOpenHandler(() => ({
         action: 'allow',
         overrideBrowserWindowOptions: {
           width: 1280,
           height: 900,
-          webPreferences: { sandbox: true, partition },
+          webPreferences: { sandbox: true, partition, plugins: true },
         },
       }))
+
+      // Some portals deliver the resolution as a download (Content-Disposition:
+      // attachment) instead of an inline PDF. Without a handler the download would
+      // vanish silently and the popup would stay blank. Prompt for a save location
+      // and open the file when finished so the user can actually read it.
+      const downloadHandler = (_e: Electron.Event, item: Electron.DownloadItem): void => {
+        const suggested = item.getFilename() || 'resolucion.pdf'
+        const savePath = dialog.showSaveDialogSync(win, {
+          title: 'Guardar documento',
+          defaultPath: join(app.getPath('downloads'), suggested),
+        })
+        if (!savePath) { item.cancel(); return }
+        item.setSavePath(savePath)
+        item.once('done', (_evt, state) => {
+          if (state === 'completed') { try { shell.openPath(savePath) } catch { /* ignore */ } }
+        })
+      }
+      portalSession.on('will-download', downloadHandler)
 
       // Prevent any portal page from blocking the window close with a beforeunload dialog
       win.webContents.on('will-prevent-unload', (event) => {
@@ -639,6 +661,7 @@ export function registerCertificateHandlers(): void {
 
       win.on('closed', () => {
         try { app.removeListener('select-client-certificate', selectCertHandler) } catch { /* ignore */ }
+        try { portalSession.removeListener('will-download', downloadHandler) } catch { /* ignore */ }
         cleanup()
       })
 
