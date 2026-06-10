@@ -8,6 +8,7 @@ const crypto = require("crypto");
 const fs = require("fs");
 const os = require("os");
 const child_process = require("child_process");
+const util = require("util");
 function _interopNamespaceDefault(e) {
   const n = Object.create(null, { [Symbol.toStringTag]: { value: "Module" } });
   if (e) {
@@ -47,6 +48,27 @@ function runMigrations() {
   if (!customCols.find((c) => c.name === "subcategory")) {
     db.exec("ALTER TABLE custom_tramites ADD COLUMN subcategory TEXT NOT NULL DEFAULT ''");
   }
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS shortcuts (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      name TEXT NOT NULL,
+      url TEXT NOT NULL,
+      certificate_id INTEGER REFERENCES certificates(id) ON DELETE SET NULL,
+      use_count INTEGER NOT NULL DEFAULT 0,
+      last_used TEXT,
+      color TEXT NOT NULL DEFAULT '#d4a853',
+      notes TEXT,
+      created_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+    CREATE INDEX IF NOT EXISTS idx_shortcuts_use_count ON shortcuts(use_count DESC);
+  `);
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS installed_cert_thumbprints (
+      thumbprint TEXT PRIMARY KEY,
+      cert_id    INTEGER REFERENCES certificates(id) ON DELETE SET NULL,
+      installed_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+  `);
 }
 function createTables() {
   db.exec(`
@@ -300,7 +322,44 @@ function seedFiscalCalendar2026() {
   });
   insertMany(deadlines2026);
 }
+const execAsync = util.promisify(child_process.exec);
 const ALGORITHM = "aes-256-gcm";
+function getCertSha1(certData) {
+  try {
+    let derBuffer;
+    if (Buffer.isBuffer(certData)) {
+      derBuffer = certData;
+    } else if (certData instanceof Uint8Array) {
+      derBuffer = Buffer.from(certData);
+    } else if (typeof certData === "string") {
+      const match = certData.match(/-----BEGIN CERTIFICATE-----\s*([\s\S]+?)\s*-----END CERTIFICATE-----/);
+      if (match) {
+        derBuffer = Buffer.from(match[1].replace(/\s+/g, ""), "base64");
+      } else {
+        derBuffer = Buffer.from(certData, "binary");
+      }
+    } else {
+      return "";
+    }
+    return crypto__namespace.createHash("sha1").update(derBuffer).digest("hex").toUpperCase();
+  } catch {
+    return "";
+  }
+}
+function getCertElectronFingerprint(p12Buffer, password) {
+  try {
+    const p12Der = forge__namespace.util.createBuffer(p12Buffer.toString("binary"));
+    const p12 = forge__namespace.pkcs12.pkcs12FromAsn1(forge__namespace.asn1.fromDer(p12Der), password);
+    const bags = p12.getBags({ bagType: forge__namespace.pki.oids.certBag });
+    const certBags = bags[forge__namespace.pki.oids.certBag];
+    if (!certBags?.length) return "";
+    const derBytes = forge__namespace.asn1.toDer(forge__namespace.pki.certificateToAsn1(certBags[0].cert)).getBytes();
+    const sha256b64 = crypto__namespace.createHash("sha256").update(Buffer.from(derBytes, "binary")).digest("base64");
+    return `sha256/${sha256b64}`;
+  } catch {
+    return "";
+  }
+}
 function deriveKey(password, salt) {
   return crypto__namespace.pbkdf2Sync(password, salt, 1e5, 32, "sha256");
 }
@@ -376,6 +435,74 @@ function repackageP12(buffer, originalPassword, newPassword) {
   });
   return Buffer.from(forge__namespace.asn1.toDer(newP12Asn1).getBytes(), "binary");
 }
+async function cleanOsStore() {
+  try {
+    const rows = getDb().prepare(
+      "SELECT fingerprint FROM certificates WHERE fingerprint IS NOT NULL AND fingerprint != ''"
+    ).all();
+    const sha1sFromDb = rows.map((r) => r.fingerprint.replace(/:/g, "").toUpperCase()).filter(Boolean);
+    let trackedThumbs = [];
+    try {
+      const trackedRows = getDb().prepare(
+        "SELECT thumbprint FROM installed_cert_thumbprints"
+      ).all();
+      trackedThumbs = trackedRows.map((r) => r.thumbprint.toUpperCase()).filter(Boolean);
+    } catch {
+    }
+    const allThumbs = [.../* @__PURE__ */ new Set([...sha1sFromDb, ...trackedThumbs])];
+    if (allThumbs.length === 0) return { cleaned: 0 };
+    if (process.platform === "win32") {
+      const thumbprintList = allThumbs.map((t) => `'${t}'`).join(",");
+      const psScript = `
+$tps = @(${thumbprintList})
+$count = 0
+foreach ($tp in $tps) {
+  $cert = Get-Item "Cert:\\CurrentUser\\My\\$tp" -ErrorAction SilentlyContinue
+  if ($cert) {
+    Remove-Item "Cert:\\CurrentUser\\My\\$tp" -DeleteKey -ErrorAction SilentlyContinue
+    $count++
+  }
+}
+Write-Output $count
+`;
+      try {
+        const psEncoded = Buffer.from(psScript, "utf16le").toString("base64");
+        const { stdout } = await execAsync(
+          `powershell -NonInteractive -EncodedCommand ${psEncoded}`,
+          { encoding: "utf8", timeout: 3e4 }
+        );
+        try {
+          getDb().prepare("DELETE FROM installed_cert_thumbprints").run();
+        } catch {
+        }
+        return { cleaned: parseInt(stdout.trim(), 10) || 0 };
+      } catch {
+        return { cleaned: 0 };
+      }
+    }
+    if (process.platform === "darwin") {
+      const keychainPath = `${os.homedir()}/Library/Keychains/login.keychain-db`;
+      let cleaned = 0;
+      for (const sha1 of allThumbs) {
+        try {
+          await execAsync(
+            `security delete-identity -Z '${sha1}' '${keychainPath}' 2>/dev/null || security delete-certificate -Z '${sha1}' '${keychainPath}' 2>/dev/null`,
+            { timeout: 5e3 }
+          );
+          cleaned++;
+        } catch {
+        }
+      }
+      try {
+        getDb().prepare("DELETE FROM installed_cert_thumbprints").run();
+      } catch {
+      }
+      return { cleaned };
+    }
+  } catch {
+  }
+  return { cleaned: 0 };
+}
 function registerCertificateHandlers() {
   electron.ipcMain.handle("certificates:parseP12", (_, filePath, password) => {
     const buffer = fs.readFileSync(filePath);
@@ -384,6 +511,16 @@ function registerCertificateHandlers() {
   electron.ipcMain.handle("certificates:getAll", () => {
     return getDb().prepare(`
       SELECT cert.*, c.name as client_name, c.nif_cif as client_nif
+      FROM certificates cert
+      LEFT JOIN clients c ON c.id = cert.client_id
+      ORDER BY cert.alias ASC
+    `).all();
+  });
+  electron.ipcMain.handle("certificates:getAllMeta", () => {
+    return getDb().prepare(`
+      SELECT cert.id, cert.client_id, cert.alias, cert.valid_from, cert.valid_to,
+             cert.issuer, cert.subject,
+             c.name as client_name, c.nif_cif as client_nif
       FROM certificates cert
       LEFT JOIN clients c ON c.id = cert.client_id
       ORDER BY cert.alias ASC
@@ -467,7 +604,12 @@ function registerCertificateHandlers() {
       WHERE cert.id = ?
     `).get(data.certId);
     if (!dbCert) throw new Error("Certificado no encontrado");
+    await Promise.race([
+      cleanOsStore(),
+      new Promise((r) => setTimeout(r, 4e3))
+    ]);
     const p12Buffer = decryptP12(dbCert.encrypted_p12, dbCert.iv, dbCert.salt, data.masterPassword);
+    const targetFingerprint = getCertElectronFingerprint(p12Buffer, data.masterPassword);
     const tempPass = crypto__namespace.randomBytes(16).toString("hex");
     let tempP12;
     try {
@@ -478,70 +620,244 @@ function registerCertificateHandlers() {
     const tempPath = path.join(os.tmpdir(), `aurea-portal-${Date.now()}.pfx`);
     fs.writeFileSync(tempPath, tempP12);
     let winThumbprint = "";
+    let winSerialNumber = "";
+    let winCertFingerprint = "";
     const cleanup = () => {
       try {
         fs.unlinkSync(tempPath);
       } catch {
       }
       if (process.platform === "win32" && winThumbprint) {
-        try {
-          child_process.execSync(
-            `powershell -Command "Remove-Item -Path 'Cert:\\CurrentUser\\My\\${winThumbprint}' -DeleteKey -ErrorAction SilentlyContinue"`,
-            { timeout: 1e4 }
-          );
-        } catch {
-        }
+        child_process.exec(
+          `powershell -Command "Remove-Item -Path 'Cert:\\CurrentUser\\My\\${winThumbprint}' -DeleteKey -ErrorAction SilentlyContinue"`,
+          { timeout: 1e4 },
+          () => {
+          }
+        );
       } else if (process.platform === "darwin" && dbCert.fingerprint) {
         const sha1 = dbCert.fingerprint.replace(/:/g, "");
         const keychainPath = `${os.homedir()}/Library/Keychains/login.keychain-db`;
-        try {
-          child_process.execSync(
-            `security delete-certificate -Z '${sha1}' '${keychainPath}'`,
-            { timeout: 1e4 }
-          );
-        } catch {
-        }
+        child_process.exec(
+          `security delete-identity -Z '${sha1}' '${keychainPath}' 2>/dev/null || security delete-certificate -Z '${sha1}' '${keychainPath}' 2>/dev/null`,
+          { timeout: 1e4 },
+          () => {
+          }
+        );
       }
     };
     try {
       if (process.platform === "win32") {
-        const psOut = child_process.execSync(
-          `powershell -Command "$pwd = ConvertTo-SecureString -String '${tempPass}' -Force -AsPlainText; $cert = Import-PfxCertificate -FilePath '${tempPath.replace(/\\/g, "\\\\")}' -CertStoreLocation Cert:\\CurrentUser\\My -Password $pwd -Exportable; Write-Output $cert.Thumbprint"`,
+        const psImportScript = [
+          `$certPwd = ConvertTo-SecureString -String '${tempPass}' -Force -AsPlainText`,
+          `$cert = Import-PfxCertificate -FilePath '${tempPath}' -CertStoreLocation Cert:\\CurrentUser\\My -Password $certPwd -Exportable`,
+          `Write-Output $cert.Thumbprint`
+        ].join("\n");
+        const psImportEncoded = Buffer.from(psImportScript, "utf16le").toString("base64");
+        const { stdout: psOut, stderr: psErr } = await execAsync(
+          `powershell -NonInteractive -EncodedCommand ${psImportEncoded}`,
           { encoding: "utf8", timeout: 3e4 }
         );
-        winThumbprint = psOut.trim();
+        try {
+          const { appendFileSync: _afs } = require("fs");
+          const { join: _pj } = require("path");
+          const { app: _app } = require("electron");
+          _afs(
+            _pj(_app.getPath("userData"), "cert_debug.log"),
+            `[${(/* @__PURE__ */ new Date()).toISOString()}] IMPORT-PFXCERTIFICATE
+  certId : ${data.certId}
+  stdout : ${psOut?.trim() || "(empty)"}
+  stderr : ${psErr?.trim() || "(none)"}
+`
+          );
+        } catch {
+        }
+        winThumbprint = (psOut.match(/[0-9A-Fa-f]{40}/)?.[0] ?? "").toUpperCase();
+        if (winThumbprint) {
+          try {
+            getDb().prepare(
+              "INSERT OR REPLACE INTO installed_cert_thumbprints (thumbprint, cert_id) VALUES (?, ?)"
+            ).run(winThumbprint, data.certId);
+          } catch {
+          }
+          try {
+            const { stdout: serialOut } = await execAsync(
+              `powershell -NonInteractive -Command "(Get-Item 'Cert:\\CurrentUser\\My\\${winThumbprint}').SerialNumber"`,
+              { encoding: "utf8", timeout: 1e4 }
+            );
+            winSerialNumber = serialOut.trim().toLowerCase();
+          } catch {
+          }
+          try {
+            const { stdout: b64Out } = await execAsync(
+              `powershell -NonInteractive -Command "$c = Get-Item 'Cert:\\CurrentUser\\My\\${winThumbprint}'; [System.Convert]::ToBase64String($c.Export([System.Security.Cryptography.X509Certificates.X509ContentType]::Cert))"`,
+              { encoding: "utf8", timeout: 1e4 }
+            );
+            const derBuffer = Buffer.from(b64Out.trim(), "base64");
+            const sha256b64 = crypto__namespace.createHash("sha256").update(derBuffer).digest("base64");
+            winCertFingerprint = `sha256/${sha256b64}`;
+          } catch {
+          }
+        }
       } else if (process.platform === "darwin") {
         const keychainPath = `${os.homedir()}/Library/Keychains/login.keychain-db`;
         try {
-          child_process.execSync(
+          await execAsync(
             `security import '${tempPath}' -k '${keychainPath}' -P '${tempPass}' -A -T ''`,
             { encoding: "utf8", timeout: 3e4 }
           );
         } catch {
         }
       }
-      await new Promise((r) => setTimeout(r, 400));
+      await new Promise((r) => setTimeout(r, 1200));
+      const partition = `cert-${data.certId}-${Date.now()}`;
+      const portalSession = electron.session.fromPartition(partition);
+      portalSession.webRequest.onHeadersReceived((details, callback) => {
+        const headers = { ...details.responseHeaders };
+        for (const key of Object.keys(headers)) {
+          const lower = key.toLowerCase();
+          if (lower === "x-frame-options") {
+            delete headers[key];
+          }
+          if (lower === "content-disposition") {
+            const ctKey = Object.keys(headers).find((k) => k.toLowerCase() === "content-type");
+            const ct = ctKey ? headers[ctKey].join("").toLowerCase() : "";
+            if (ct.includes("pdf") || headers[key].join("").toLowerCase().includes(".pdf")) {
+              headers[key] = ["inline"];
+            }
+          }
+        }
+        callback({ responseHeaders: headers });
+      });
+      const selectCertHandler = (event, eventWebContents, _url, list, callback) => {
+        if (eventWebContents.session !== portalSession) return;
+        event.preventDefault();
+        try {
+          const { appendFileSync: _afs } = require("fs");
+          const { join: _pj } = require("path");
+          const { app: _app } = require("electron");
+          _afs(
+            _pj(_app.getPath("userData"), "cert_debug.log"),
+            `[${(/* @__PURE__ */ new Date()).toISOString()}] SELECT-CLIENT-CERTIFICATE
+  url           : ${_url}
+  winThumbprint : ${winThumbprint || "(empty)"}
+  winCertFP     : ${winCertFingerprint || "(empty)"}
+  winSerial     : ${winSerialNumber || "(empty)"}
+  targetFP      : ${targetFingerprint || "(empty)"}
+  list.length   : ${list.length}
+` + list.map((c, i) => `  cert[${i}] fp=${c.fingerprint} serial=${c.serialNumber} subj=${c.subjectName}`).join("\n") + "\n"
+          );
+        } catch {
+        }
+        const fpToMatch = winCertFingerprint || targetFingerprint;
+        if (fpToMatch) {
+          const match = list.find((c) => c.fingerprint === fpToMatch);
+          if (match) {
+            callback(match);
+            return;
+          }
+        }
+        const storedSha1 = dbCert.fingerprint ? dbCert.fingerprint.replace(/:/g, "").toUpperCase() : null;
+        const matchSha1 = list.find((c) => {
+          const sha1 = getCertSha1(c.data);
+          if (!sha1) return false;
+          if (winThumbprint && sha1 === winThumbprint) return true;
+          if (storedSha1 && sha1 === storedSha1) return true;
+          return false;
+        });
+        if (matchSha1) {
+          callback(matchSha1);
+          return;
+        }
+        const normalize = (s) => (s ?? "").toLowerCase().replace(/^0+/, "");
+        const targetSerial = normalize(winSerialNumber) || normalize(dbCert.serial_number);
+        if (targetSerial) {
+          const matchSerial = list.find((c) => normalize(c.serialNumber) === targetSerial);
+          if (matchSerial) {
+            callback(matchSerial);
+            return;
+          }
+        }
+        try {
+          const { appendFileSync: _afs } = require("fs");
+          const { join: _pj } = require("path");
+          const { app: _app } = require("electron");
+          _afs(
+            _pj(_app.getPath("userData"), "cert_debug.log"),
+            `[${(/* @__PURE__ */ new Date()).toISOString()}] NO MATCH — all strategies failed
+`
+          );
+        } catch {
+        }
+        console.error(
+          `[ÁureaCert] select-client-certificate: no match for cert id=${data.certId} (${dbCert.alias}).`,
+          `targetFingerprint=${targetFingerprint} winSerial=${winSerialNumber}`,
+          `list=${list.map((c) => `${c.fingerprint}|${c.serialNumber}`).join(", ")}`
+        );
+        callback();
+      };
+      electron.app.on("select-client-certificate", selectCertHandler);
       const win = new electron.BrowserWindow({
         width: 1280,
         height: 900,
         title: `${dbCert.alias} — ÁureaCert`,
-        webPreferences: { sandbox: true, partition: `cert-${data.certId}-${Date.now()}` }
+        // plugins:true enables Chromium's built-in PDF viewer (PDFium). Without it,
+        // PDFs served inline (e.g. TGSS resolutions) open as a BLANK page. Required
+        // both here and on popups below.
+        webPreferences: { sandbox: true, partition, plugins: true }
       });
-      win.webContents.on("select-client-certificate", (event, _url, list, callback) => {
+      win.webContents.setWindowOpenHandler(() => ({
+        action: "allow",
+        overrideBrowserWindowOptions: {
+          width: 1280,
+          height: 900,
+          webPreferences: { sandbox: true, partition, plugins: true }
+        }
+      }));
+      const downloadHandler = (_e, item) => {
+        const suggested = item.getFilename() || "resolucion.pdf";
+        const savePath = electron.dialog.showSaveDialogSync(win, {
+          title: "Guardar documento",
+          defaultPath: path.join(electron.app.getPath("downloads"), suggested)
+        });
+        if (!savePath) {
+          item.cancel();
+          return;
+        }
+        item.setSavePath(savePath);
+        item.once("done", (_evt, state) => {
+          if (state === "completed") {
+            try {
+              electron.shell.openPath(savePath);
+            } catch {
+            }
+          }
+        });
+      };
+      portalSession.on("will-download", downloadHandler);
+      win.webContents.on("will-prevent-unload", (event) => {
         event.preventDefault();
-        const match = list.find(
-          (c) => c.serialNumber?.toLowerCase().replace(/^0+/, "") === dbCert.serial_number?.toLowerCase().replace(/^0+/, "")
-        );
-        callback(match ?? list[0] ?? void 0);
       });
-      win.on("closed", cleanup);
+      win.on("closed", () => {
+        try {
+          electron.app.removeListener("select-client-certificate", selectCertHandler);
+        } catch {
+        }
+        try {
+          portalSession.removeListener("will-download", downloadHandler);
+        } catch {
+        }
+        cleanup();
+      });
+      let initialLoadDone = false;
       win.webContents.on("did-finish-load", () => {
+        if (initialLoadDone) return;
+        initialLoadDone = true;
         win.webContents.executeJavaScript(`
           (function() {
-            // DEHU: look for the certificate access link/button and click it
+            // Use specific selectors only — avoid broad href patterns like
+            // a[href*="certificado"] that match navigation menus and breadcrumbs
+            // causing an infinite click→navigate→did-finish-load loop.
             const selectors = [
-              'a[href*="certificado"]',
-              'a[href*="certificate"]',
               'button[id*="cert"]',
               'a[id*="cert"]',
               '[data-id="cert"]',
@@ -565,6 +881,9 @@ function registerCertificateHandlers() {
       cleanup();
       throw err;
     }
+  });
+  electron.ipcMain.handle("certificates:cleanOsStore", async () => {
+    return cleanOsStore();
   });
   electron.ipcMain.handle("certificates:scanOsStore", async () => {
     if (process.platform === "win32") return scanWindowsCertStore();
@@ -593,30 +912,108 @@ function registerCertificateHandlers() {
   });
   electron.ipcMain.handle("certificates:importFromOsStore", async (_, data) => {
     if (process.platform !== "win32") throw new Error("Solo disponible en Windows");
-    return importCertFromWindowsStore(data.thumbprint, data.alias, data.clientId, data.masterPassword);
+    return importCertFromWindowsStore(data.thumbprint, data.alias, data.clientId, data.masterPassword, data.password);
   });
 }
-function scanWindowsCertStore() {
+async function scanWindowsCertStore() {
   try {
-    const output = child_process.execSync(
-      `powershell -Command "Get-ChildItem Cert:\\CurrentUser\\My | Select-Object Thumbprint, Subject, Issuer, @{N='NotBefore';E={$_.NotBefore.ToString('yyyy-MM-ddTHH:mm:ss')}}, @{N='NotAfter';E={$_.NotAfter.ToString('yyyy-MM-ddTHH:mm:ss')}}, @{N='HasPrivateKey';E={$_.HasPrivateKey}}, @{N='Exportable';E={try{$_.PrivateKey.CspKeyContainerInfo.Exportable}catch{'unknown'}}} | ConvertTo-Json -Compress"`,
-      { encoding: "utf8", timeout: 1e4 }
+    const psScript = `
+$certs = Get-ChildItem Cert:\\CurrentUser\\My | Where-Object { $_.HasPrivateKey }
+$result = foreach ($c in $certs) {
+    $exportable = try {
+        # Legacy CAPI
+        $e = $c.PrivateKey.CspKeyContainerInfo.Exportable
+        if ($null -ne $e) { $e }
+        else {
+            # Modern CNG RSA
+            $rsa = [System.Security.Cryptography.X509Certificates.RSACertificateExtensions]::GetRSAPrivateKey($c)
+            if ($rsa -is [System.Security.Cryptography.RSACng]) {
+                try {
+                    $prop = $rsa.Key.GetProperty('Export Policy', [System.Security.Cryptography.CngPropertyOptions]::None)
+                    $val = [System.BitConverter]::ToInt32($prop.GetValue(), 0)
+                    if (($val -band 1) -ne 0) { $true } else { 'cng_locked' }
+                } catch { 'cng_locked' }
+            } else {
+                # CNG ECDSA or unknown
+                $ec = [System.Security.Cryptography.X509Certificates.ECDsaCertificateExtensions]::GetECDsaPrivateKey($c)
+                if ($ec -is [System.Security.Cryptography.ECDsaCng]) {
+                    try {
+                        $prop = $ec.Key.GetProperty('Export Policy', [System.Security.Cryptography.CngPropertyOptions]::None)
+                        $val = [System.BitConverter]::ToInt32($prop.GetValue(), 0)
+                        if (($val -band 1) -ne 0) { $true } else { 'cng_locked' }
+                    } catch { 'cng_locked' }
+                } else { 'unknown' }
+            }
+        }
+    } catch { 'unknown' }
+    [PSCustomObject]@{
+        Thumbprint   = $c.Thumbprint
+        Subject      = $c.Subject
+        Issuer       = $c.Issuer
+        NotBefore    = $c.NotBefore.ToString('yyyy-MM-ddTHH:mm:ss')
+        NotAfter     = $c.NotAfter.ToString('yyyy-MM-ddTHH:mm:ss')
+        HasPrivateKey = $c.HasPrivateKey
+        Exportable   = $exportable
+    }
+}
+$result | ConvertTo-Json -Compress -Depth 3
+`;
+    const psEncoded = Buffer.from(psScript, "utf16le").toString("base64");
+    const { stdout } = await execAsync(
+      `powershell -NonInteractive -EncodedCommand ${psEncoded}`,
+      { encoding: "utf8", timeout: 9e4 }
+      // 90s: 150 certs × CNG introspection can be slow
     );
-    const raw = JSON.parse(output.trim());
+    const raw = JSON.parse(stdout.trim());
     return Array.isArray(raw) ? raw : [raw];
   } catch {
     return [];
   }
 }
-async function importCertFromWindowsStore(thumbprint, alias, clientId, masterPassword) {
+async function importCertFromWindowsStore(thumbprint, alias, clientId, masterPassword, _certPassword) {
   const tempPass = crypto__namespace.randomBytes(16).toString("hex");
-  const tempDir = os.tmpdir().replace(/\\/g, "/");
-  const tempPath = path.join(tempDir, `aurea-${Date.now()}.pfx`);
+  const tempPath = path.join(os.tmpdir(), `aurea-${Date.now()}.pfx`);
   try {
-    child_process.execSync(
-      `powershell -Command "$cert = Get-ChildItem -Path 'Cert:\\CurrentUser\\My\\${thumbprint}'; $pwd = ConvertTo-SecureString -String '${tempPass}' -Force -AsPlainText; Export-PfxCertificate -Cert $cert -FilePath '${tempPath}' -Password $pwd | Out-Null"`,
-      { encoding: "utf8", timeout: 3e4 }
-    );
+    const psScript = `
+$ErrorActionPreference = 'Stop'
+$cert = Get-ChildItem -Path 'Cert:\\CurrentUser\\My\\${thumbprint}'
+if (-not $cert) { throw 'Certificado no encontrado en el almacen' }
+
+# Try to mark CNG RSA key as exportable (FNMT and modern certs use CNG)
+try {
+    $rsa = [System.Security.Cryptography.X509Certificates.RSACertificateExtensions]::GetRSAPrivateKey($cert)
+    if ($rsa -is [System.Security.Cryptography.RSACng]) {
+        $policyBytes = [System.BitConverter]::GetBytes([int]3)
+        $exportPolicy = New-Object System.Security.Cryptography.CngProperty(
+            'Export Policy', $policyBytes, [System.Security.Cryptography.CngPropertyOptions]::Persist)
+        $rsa.Key.SetProperty($exportPolicy)
+    }
+} catch {}
+
+# Try to mark CNG ECDSA key as exportable (for EC certificates)
+try {
+    $ecdsa = [System.Security.Cryptography.X509Certificates.ECDsaCertificateExtensions]::GetECDsaPrivateKey($cert)
+    if ($ecdsa -is [System.Security.Cryptography.ECDsaCng]) {
+        $policyBytes = [System.BitConverter]::GetBytes([int]3)
+        $exportPolicy = New-Object System.Security.Cryptography.CngProperty(
+            'Export Policy', $policyBytes, [System.Security.Cryptography.CngPropertyOptions]::Persist)
+        $ecdsa.Key.SetProperty($exportPolicy)
+    }
+} catch {}
+
+$p = ConvertTo-SecureString -String '${tempPass}' -Force -AsPlainText
+Export-PfxCertificate -Cert $cert -FilePath '${tempPath.replace(/\\/g, "\\\\")}' -Password $p | Out-Null
+`;
+    const psEncoded = Buffer.from(psScript, "utf16le").toString("base64");
+    try {
+      await execAsync(
+        `powershell -NonInteractive -EncodedCommand ${psEncoded}`,
+        { encoding: "utf8", timeout: 3e4 }
+      );
+    } catch (psErr) {
+      const detail = (psErr.stderr || "").trim() || (psErr.stdout || "").trim() || psErr.message || "Error desconocido";
+      throw new Error(`PowerShell: ${detail.replace(/\r?\n/g, " ").slice(0, 300)}`);
+    }
     const buffer = fs.readFileSync(tempPath);
     const info = parseP12Info(buffer, tempPass);
     const repackaged = repackageP12(buffer, tempPass, masterPassword);
@@ -627,7 +1024,7 @@ async function importCertFromWindowsStore(thumbprint, alias, clientId, masterPas
          encrypted_p12, iv, salt, fingerprint, source)
       VALUES
         (@clientId, @alias, @issuer, @serialNumber, @subject, @validFrom, @validTo,
-         @encrypted, @iv, @salt, @fingerprint, 'windows_store')
+         @encrypted, @iv, @salt, @fingerprint, 'os_store')
     `).run({
       clientId,
       alias,
@@ -1021,6 +1418,73 @@ function registerCustomTramiteHandlers() {
     return { success: true };
   });
 }
+const SELECT_SHORTCUT = `
+  SELECT s.*, c.alias as cert_alias, c.valid_to as cert_valid_to,
+    cl.name as client_name, cl.nif_cif as client_nif
+  FROM shortcuts s
+  LEFT JOIN certificates c ON c.id = s.certificate_id
+  LEFT JOIN clients cl ON cl.id = c.client_id
+`;
+function registerShortcutHandlers() {
+  electron.ipcMain.handle("shortcuts:getAll", () => {
+    return getDb().prepare(`${SELECT_SHORTCUT} ORDER BY s.use_count DESC, s.name ASC`).all();
+  });
+  electron.ipcMain.handle("shortcuts:getTop", (_, limit = 6) => {
+    return getDb().prepare(`${SELECT_SHORTCUT} ORDER BY s.use_count DESC, s.last_used DESC LIMIT ?`).all(limit);
+  });
+  electron.ipcMain.handle("shortcuts:create", (_, data) => {
+    const result = getDb().prepare(`
+      INSERT INTO shortcuts (name, url, certificate_id, color, notes)
+      VALUES (@name, @url, @certificateId, @color, @notes)
+    `).run({
+      name: data.name,
+      url: data.url,
+      certificateId: data.certificate_id ?? null,
+      color: data.color || "#d4a853",
+      notes: data.notes ?? null
+    });
+    return getDb().prepare(`${SELECT_SHORTCUT} WHERE s.id = ?`).get(result.lastInsertRowid);
+  });
+  electron.ipcMain.handle("shortcuts:update", (_, id, data) => {
+    const fields = [];
+    const params = { id };
+    if (data.name !== void 0) {
+      fields.push("name = @name");
+      params.name = data.name;
+    }
+    if (data.url !== void 0) {
+      fields.push("url = @url");
+      params.url = data.url;
+    }
+    if ("certificate_id" in data) {
+      fields.push("certificate_id = @certId");
+      params.certId = data.certificate_id ?? null;
+    }
+    if (data.color !== void 0) {
+      fields.push("color = @color");
+      params.color = data.color;
+    }
+    if (data.notes !== void 0) {
+      fields.push("notes = @notes");
+      params.notes = data.notes;
+    }
+    if (fields.length === 0) return null;
+    getDb().prepare(`UPDATE shortcuts SET ${fields.join(", ")} WHERE id = @id`).run(params);
+    return getDb().prepare(`${SELECT_SHORTCUT} WHERE s.id = ?`).get(id);
+  });
+  electron.ipcMain.handle("shortcuts:delete", (_, id) => {
+    getDb().prepare("DELETE FROM shortcuts WHERE id = ?").run(id);
+    return { success: true };
+  });
+  electron.ipcMain.handle("shortcuts:recordUse", (_, id) => {
+    getDb().prepare(`
+      UPDATE shortcuts
+      SET use_count = use_count + 1, last_used = datetime('now')
+      WHERE id = ?
+    `).run(id);
+    return { success: true };
+  });
+}
 let mainWindow = null;
 function createWindow() {
   mainWindow = new electron.BrowserWindow({
@@ -1041,6 +1505,13 @@ function createWindow() {
   mainWindow.on("ready-to-show", () => {
     mainWindow.show();
     if (utils.is.dev) mainWindow.webContents.openDevTools();
+    setImmediate(async () => {
+      generateAlerts();
+      try {
+        await cleanOsStore();
+      } catch {
+      }
+    });
   });
   mainWindow.webContents.setWindowOpenHandler(({ url }) => {
     electron.shell.openExternal(url);
@@ -1070,7 +1541,6 @@ electron.app.whenReady().then(() => {
     utils.optimizer.watchWindowShortcuts(window);
   });
   initDatabase();
-  generateAlerts();
   registerCertificateHandlers();
   registerClientHandlers();
   registerProcedureHandlers();
@@ -1078,6 +1548,7 @@ electron.app.whenReady().then(() => {
   registerSettingsHandlers();
   registerNotificationHandlers();
   registerCustomTramiteHandlers();
+  registerShortcutHandlers();
   electron.ipcMain.handle("app:getVersion", () => electron.app.getVersion());
   electron.ipcMain.handle("app:openExternal", (_, url) => electron.shell.openExternal(url));
   electron.ipcMain.handle("dialog:openFile", async (_, options) => {

@@ -19,6 +19,7 @@ const api = {
   },
   certificates: {
     getAll: () => electron.ipcRenderer.invoke("certificates:getAll"),
+    getAllMeta: () => electron.ipcRenderer.invoke("certificates:getAllMeta"),
     getByClient: (clientId) => electron.ipcRenderer.invoke("certificates:getByClient", clientId),
     import: (data) => electron.ipcRenderer.invoke("certificates:import", data),
     delete: (id) => electron.ipcRenderer.invoke("certificates:delete", id),
@@ -26,6 +27,7 @@ const api = {
     openPortal: (certId, url) => electron.ipcRenderer.invoke("certificates:openPortal", certId, url),
     openBatchPortal: (data) => electron.ipcRenderer.invoke("certificates:openBatchPortal", data),
     scanOsStore: () => electron.ipcRenderer.invoke("certificates:scanOsStore"),
+    cleanOsStore: () => electron.ipcRenderer.invoke("certificates:cleanOsStore"),
     importFromOsStore: (data) => electron.ipcRenderer.invoke("certificates:importFromOsStore", data),
     parseP12: (filePath, password) => electron.ipcRenderer.invoke("certificates:parseP12", filePath, password),
     openPortalWithCert: (data) => electron.ipcRenderer.invoke("certificates:openPortalWithCert", data)
@@ -66,6 +68,14 @@ const api = {
     setLockPassword: (password) => electron.ipcRenderer.invoke("settings:setLockPassword", password),
     verifyLockPassword: (password) => electron.ipcRenderer.invoke("settings:verifyLockPassword", password),
     removeLockPassword: () => electron.ipcRenderer.invoke("settings:removeLockPassword")
+  },
+  shortcuts: {
+    getAll: () => electron.ipcRenderer.invoke("shortcuts:getAll"),
+    getTop: (limit) => electron.ipcRenderer.invoke("shortcuts:getTop", limit),
+    create: (data) => electron.ipcRenderer.invoke("shortcuts:create", data),
+    update: (id, data) => electron.ipcRenderer.invoke("shortcuts:update", id, data),
+    delete: (id) => electron.ipcRenderer.invoke("shortcuts:delete", id),
+    recordUse: (id) => electron.ipcRenderer.invoke("shortcuts:recordUse", id)
   }
 };
 electron.contextBridge.exposeInMainWorld("api", api);

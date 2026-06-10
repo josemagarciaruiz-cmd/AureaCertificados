@@ -523,6 +523,29 @@ export function registerCertificateHandlers(): void {
       const partition = `cert-${data.certId}-${Date.now()}`
       const portalSession = session.fromPartition(partition)
 
+      // PDF fix (Electron 29): plugins:true is deprecated and a no-op in modern Electron.
+      // The real cause of blank PDF pages in TGSS is:
+      //   1. X-Frame-Options: SAMEORIGIN/DENY — prevents the PDF from loading inside an iframe
+      //   2. Content-Disposition: attachment — forces a download instead of inline rendering
+      // This handler strips both obstacles so Chromium's built-in PDFium viewer activates.
+      portalSession.webRequest.onHeadersReceived((details, callback) => {
+        const headers = { ...details.responseHeaders }
+        for (const key of Object.keys(headers)) {
+          const lower = key.toLowerCase()
+          if (lower === 'x-frame-options') {
+            delete headers[key]
+          }
+          if (lower === 'content-disposition') {
+            const ctKey = Object.keys(headers).find((k) => k.toLowerCase() === 'content-type')
+            const ct = ctKey ? (headers[ctKey] as string[]).join('').toLowerCase() : ''
+            if (ct.includes('pdf') || (headers[key] as string[]).join('').toLowerCase().includes('.pdf')) {
+              headers[key] = ['inline']
+            }
+          }
+        }
+        callback({ responseHeaders: headers })
+      })
+
       const selectCertHandler = (
         event: Electron.Event,
         eventWebContents: Electron.WebContents,
