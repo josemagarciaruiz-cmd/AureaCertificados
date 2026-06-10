@@ -2,7 +2,7 @@ import { app, ipcMain, BrowserWindow, session, dialog, shell } from 'electron'
 import { getDb } from './database'
 import * as forge from 'node-forge'
 import * as crypto from 'crypto'
-import { readFileSync, writeFileSync, unlinkSync } from 'fs'
+import { readFileSync, writeFileSync, unlinkSync, appendFileSync } from 'fs'
 import { tmpdir, homedir } from 'os'
 import { join } from 'path'
 import { exec, execSync } from 'child_process'
@@ -523,6 +523,13 @@ export function registerCertificateHandlers(): void {
       const partition = `cert-${data.certId}-${Date.now()}`
       const portalSession = session.fromPartition(partition)
 
+      // ── Diagnostic helper ──────────────────────────────────────────────────────
+      const pdfLogPath = join(app.getPath('userData'), 'pdf_debug.log')
+      const pdfLog = (msg: string) => {
+        try { appendFileSync(pdfLogPath, `[${new Date().toISOString()}] ${msg}\n`) } catch { /* non-blocking */ }
+      }
+      pdfLog(`=== PORTAL OPEN cert=${data.certId} url=${data.url} ===`)
+
       // PDF fix (Electron 29): plugins:true is deprecated and a no-op in modern Electron.
       // The real cause of blank PDF pages in TGSS is:
       //   1. X-Frame-Options: SAMEORIGIN/DENY — prevents the PDF from loading inside an iframe
@@ -530,19 +537,53 @@ export function registerCertificateHandlers(): void {
       // This handler strips both obstacles so Chromium's built-in PDFium viewer activates.
       portalSession.webRequest.onHeadersReceived((details, callback) => {
         const headers = { ...details.responseHeaders }
-        for (const key of Object.keys(headers)) {
-          const lower = key.toLowerCase()
-          if (lower === 'x-frame-options') {
-            delete headers[key]
-          }
-          if (lower === 'content-disposition') {
-            const ctKey = Object.keys(headers).find((k) => k.toLowerCase() === 'content-type')
-            const ct = ctKey ? (headers[ctKey] as string[]).join('').toLowerCase() : ''
-            if (ct.includes('pdf') || (headers[key] as string[]).join('').toLowerCase().includes('.pdf')) {
-              headers[key] = ['inline']
-            }
+
+        const ctKey = Object.keys(headers).find((k) => k.toLowerCase() === 'content-type')
+        const cdKey = Object.keys(headers).find((k) => k.toLowerCase() === 'content-disposition')
+        const xfoKey = Object.keys(headers).find((k) => k.toLowerCase() === 'x-frame-options')
+        const ct = ctKey ? (headers[ctKey] as string[]).join('') : ''
+        const isPdfUrl = details.url.toLowerCase().includes('imprpdf') ||
+                         details.url.toLowerCase().includes('inserseñacoder') ||
+                         details.url.toLowerCase().includes('insenacoder') ||
+                         details.url.toLowerCase().includes('generapdf') ||
+                         details.url.toLowerCase().includes('.pdf')
+        const isPdfCt = ct.toLowerCase().includes('pdf') || ct === 'application/octet-stream'
+
+        // Para el endpoint de PDF: volcar TODAS las cabeceras para diagnóstico completo
+        if (isPdfUrl || isPdfCt) {
+          pdfLog(`=== PDF ENDPOINT ${details.statusCode} ${details.url} ===`)
+          for (const [k, v] of Object.entries(headers)) {
+            pdfLog(`  ${k}: ${Array.isArray(v) ? v.join(', ') : v}`)
           }
         }
+
+        // Si no hay Content-Type en una URL que sabemos que es PDF, inyectarlo
+        if (isPdfUrl && !ctKey) {
+          pdfLog(`  → INJECTING Content-Type: application/pdf (server sent none)`)
+          headers['content-type'] = ['application/pdf']
+        }
+
+        // Si el Content-Type es octet-stream para una URL PDF, corregirlo
+        if (isPdfUrl && ct === 'application/octet-stream') {
+          pdfLog(`  → FIXING Content-Type: application/octet-stream → application/pdf`)
+          headers[ctKey!] = ['application/pdf']
+        }
+
+        // Eliminar X-Frame-Options en todos los casos
+        if (xfoKey) {
+          pdfLog(`  → Removing X-Frame-Options`)
+          delete headers[xfoKey]
+        }
+
+        // Forzar Content-Disposition: inline para PDFs (no attachment)
+        if (cdKey) {
+          const ct2 = ctKey ? (headers[ctKey] as string[]).join('').toLowerCase() : ''
+          if (isPdfUrl || ct2.includes('pdf')) {
+            pdfLog(`  → Forcing Content-Disposition: inline`)
+            headers[cdKey] = ['inline']
+          }
+        }
+
         callback({ responseHeaders: headers })
       })
 
@@ -676,6 +717,25 @@ export function registerCertificateHandlers(): void {
         })
       }
       portalSession.on('will-download', downloadHandler)
+
+      // F12 opens DevTools in the portal window for live debugging
+      win.webContents.on('before-input-event', (_e, input) => {
+        if (input.type === 'keyDown' && input.key === 'F12') win.webContents.openDevTools()
+      })
+      // Log every navigation inside the portal so we know exactly what URL the resolution opens
+      win.webContents.on('will-navigate', (_e, url) => pdfLog(`NAVIGATE ${url}`))
+      win.webContents.on('did-navigate', (_e, url) => pdfLog(`DID-NAVIGATE ${url}`))
+      win.webContents.on('did-navigate-in-page', (_e, url) => pdfLog(`SPA-NAVIGATE ${url}`))
+      // Log popups and enable F12 in them too
+      win.webContents.on('did-create-window', (childWin) => {
+        pdfLog(`POPUP CREATED url=${childWin.webContents.getURL()}`)
+        childWin.webContents.on('before-input-event', (_e, input) => {
+          if (input.type === 'keyDown' && input.key === 'F12') childWin.webContents.openDevTools()
+        })
+        childWin.webContents.on('will-navigate', (_e, url) => pdfLog(`POPUP NAVIGATE ${url}`))
+        childWin.webContents.on('did-navigate', (_e, url) => pdfLog(`POPUP DID-NAVIGATE ${url}`))
+        childWin.webContents.on('did-finish-load', () => pdfLog(`POPUP LOADED ${childWin.webContents.getURL()}`))
+      })
 
       // Prevent any portal page from blocking the window close with a beforeunload dialog
       win.webContents.on('will-prevent-unload', (event) => {

@@ -711,19 +711,46 @@ function registerCertificateHandlers() {
       await new Promise((r) => setTimeout(r, 1200));
       const partition = `cert-${data.certId}-${Date.now()}`;
       const portalSession = electron.session.fromPartition(partition);
+      const pdfLogPath = path.join(electron.app.getPath("userData"), "pdf_debug.log");
+      const pdfLog = (msg) => {
+        try {
+          fs.appendFileSync(pdfLogPath, `[${(/* @__PURE__ */ new Date()).toISOString()}] ${msg}
+`);
+        } catch {
+        }
+      };
+      pdfLog(`=== PORTAL OPEN cert=${data.certId} url=${data.url} ===`);
       portalSession.webRequest.onHeadersReceived((details, callback) => {
         const headers = { ...details.responseHeaders };
-        for (const key of Object.keys(headers)) {
-          const lower = key.toLowerCase();
-          if (lower === "x-frame-options") {
-            delete headers[key];
+        const ctKey = Object.keys(headers).find((k) => k.toLowerCase() === "content-type");
+        const cdKey = Object.keys(headers).find((k) => k.toLowerCase() === "content-disposition");
+        const xfoKey = Object.keys(headers).find((k) => k.toLowerCase() === "x-frame-options");
+        const ct = ctKey ? headers[ctKey].join("") : "";
+        const isPdfUrl = details.url.toLowerCase().includes("imprpdf") || details.url.toLowerCase().includes("inserseñacoder") || details.url.toLowerCase().includes("insenacoder") || details.url.toLowerCase().includes("generapdf") || details.url.toLowerCase().includes(".pdf");
+        const isPdfCt = ct.toLowerCase().includes("pdf") || ct === "application/octet-stream";
+        if (isPdfUrl || isPdfCt) {
+          pdfLog(`=== PDF ENDPOINT ${details.statusCode} ${details.url} ===`);
+          for (const [k, v] of Object.entries(headers)) {
+            pdfLog(`  ${k}: ${Array.isArray(v) ? v.join(", ") : v}`);
           }
-          if (lower === "content-disposition") {
-            const ctKey = Object.keys(headers).find((k) => k.toLowerCase() === "content-type");
-            const ct = ctKey ? headers[ctKey].join("").toLowerCase() : "";
-            if (ct.includes("pdf") || headers[key].join("").toLowerCase().includes(".pdf")) {
-              headers[key] = ["inline"];
-            }
+        }
+        if (isPdfUrl && !ctKey) {
+          pdfLog(`  → INJECTING Content-Type: application/pdf (server sent none)`);
+          headers["content-type"] = ["application/pdf"];
+        }
+        if (isPdfUrl && ct === "application/octet-stream") {
+          pdfLog(`  → FIXING Content-Type: application/octet-stream → application/pdf`);
+          headers[ctKey] = ["application/pdf"];
+        }
+        if (xfoKey) {
+          pdfLog(`  → Removing X-Frame-Options`);
+          delete headers[xfoKey];
+        }
+        if (cdKey) {
+          const ct2 = ctKey ? headers[ctKey].join("").toLowerCase() : "";
+          if (isPdfUrl || ct2.includes("pdf")) {
+            pdfLog(`  → Forcing Content-Disposition: inline`);
+            headers[cdKey] = ["inline"];
           }
         }
         callback({ responseHeaders: headers });
@@ -834,6 +861,21 @@ function registerCertificateHandlers() {
         });
       };
       portalSession.on("will-download", downloadHandler);
+      win.webContents.on("before-input-event", (_e, input) => {
+        if (input.type === "keyDown" && input.key === "F12") win.webContents.openDevTools();
+      });
+      win.webContents.on("will-navigate", (_e, url) => pdfLog(`NAVIGATE ${url}`));
+      win.webContents.on("did-navigate", (_e, url) => pdfLog(`DID-NAVIGATE ${url}`));
+      win.webContents.on("did-navigate-in-page", (_e, url) => pdfLog(`SPA-NAVIGATE ${url}`));
+      win.webContents.on("did-create-window", (childWin) => {
+        pdfLog(`POPUP CREATED url=${childWin.webContents.getURL()}`);
+        childWin.webContents.on("before-input-event", (_e, input) => {
+          if (input.type === "keyDown" && input.key === "F12") childWin.webContents.openDevTools();
+        });
+        childWin.webContents.on("will-navigate", (_e, url) => pdfLog(`POPUP NAVIGATE ${url}`));
+        childWin.webContents.on("did-navigate", (_e, url) => pdfLog(`POPUP DID-NAVIGATE ${url}`));
+        childWin.webContents.on("did-finish-load", () => pdfLog(`POPUP LOADED ${childWin.webContents.getURL()}`));
+      });
       win.webContents.on("will-prevent-unload", (event) => {
         event.preventDefault();
       });
