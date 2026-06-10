@@ -770,8 +770,16 @@ function registerCertificateHandlers() {
           item.setSavePath(savePath);
           item.once("done", (_ev, state) => {
             if (state === "completed") {
-              pdfLog(`PDF saved OK → opening with system viewer`);
-              electron.shell.openPath(savePath);
+              const exists = require("fs").existsSync(savePath);
+              pdfLog(`PDF done: state=completed exists=${exists} path=${savePath}`);
+              if (exists) {
+                electron.shell.openPath(savePath).then((errMsg) => {
+                  if (errMsg) pdfLog(`shell.openPath FAILED: "${errMsg}"`);
+                  else pdfLog(`shell.openPath OK`);
+                });
+              } else {
+                pdfLog(`PDF file NOT FOUND after save — skipping open`);
+              }
             } else {
               pdfLog(`PDF download failed: state=${state}`);
             }
