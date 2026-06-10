@@ -755,11 +755,17 @@ function registerCertificateHandlers() {
         }
         callback({ responseHeaders: headers });
       });
+      const resolDir = path.join(electron.app.getPath("userData"), "resoluciones");
+      try {
+        require("fs").mkdirSync(resolDir, { recursive: true });
+      } catch {
+      }
       portalSession.on("will-download", (_event, item) => {
         const url = item.getURL();
         const mime = item.getMimeType();
         if (url.includes("ImprPDF") || url.includes("InSeNaCoder") || mime === "application/pdf") {
-          const savePath = path.join(electron.app.getPath("temp"), `resolucion-${Date.now()}.pdf`);
+          const ts = (/* @__PURE__ */ new Date()).toISOString().replace(/[:.]/g, "-").slice(0, 19);
+          const savePath = path.join(resolDir, `resolucion-${ts}.pdf`);
           pdfLog(`WILL-DOWNLOAD PDF url=${url} mime=${mime} → saving to ${savePath}`);
           item.setSavePath(savePath);
           item.once("done", (_ev, state) => {

@@ -585,11 +585,16 @@ export function registerCertificateHandlers(): void {
       // ── Auto-open PDF downloads desde el portal ────────────────────────────────────
       // Cuando ImprPDF/InSeNaCoder devuelve el PDF con Content-Disposition:attachment,
       // Electron dispara will-download. Lo guardamos en temp y abrimos con el visor del SO.
+      // Directorio persistente para resoluciones descargadas (no Temp, que se autolimpia)
+      const resolDir = join(app.getPath('userData'), 'resoluciones')
+      try { require('fs').mkdirSync(resolDir, { recursive: true }) } catch { /* ya existe */ }
+
       portalSession.on('will-download', (_event, item) => {
         const url = item.getURL()
         const mime = item.getMimeType()
         if (url.includes('ImprPDF') || url.includes('InSeNaCoder') || mime === 'application/pdf') {
-          const savePath = join(app.getPath('temp'), `resolucion-${Date.now()}.pdf`)
+          const ts = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19)
+          const savePath = join(resolDir, `resolucion-${ts}.pdf`)
           pdfLog(`WILL-DOWNLOAD PDF url=${url} mime=${mime} → saving to ${savePath}`)
           item.setSavePath(savePath)
           item.once('done', (_ev, state) => {
