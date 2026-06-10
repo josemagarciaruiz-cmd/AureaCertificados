@@ -734,26 +734,43 @@ function registerCertificateHandlers() {
             pdfLog(`  ${k}: ${Array.isArray(v) ? v.join(", ") : v}`);
           }
         }
-        if (isPdfUrl && !ctKey) {
-          pdfLog(`  → INJECTING Content-Type: application/pdf (server sent none)`);
+        if (isPdfUrl) {
+          pdfLog(`  → PDF URL detected: forcing attachment download`);
           headers["content-type"] = ["application/pdf"];
-        }
-        if (isPdfUrl && ct === "application/octet-stream") {
-          pdfLog(`  → FIXING Content-Type: application/octet-stream → application/pdf`);
-          headers[ctKey] = ["application/pdf"];
+          headers["content-disposition"] = ['attachment; filename="resolucion.pdf"'];
+          if (xfoKey) {
+            delete headers[xfoKey];
+            pdfLog(`  → Removing X-Frame-Options`);
+          }
+          const cspKey2 = Object.keys(headers).find((k) => k.toLowerCase() === "content-security-policy");
+          if (cspKey2) {
+            delete headers[cspKey2];
+          }
+          callback({ responseHeaders: headers });
+          return;
         }
         if (xfoKey) {
           pdfLog(`  → Removing X-Frame-Options`);
           delete headers[xfoKey];
         }
-        if (cdKey) {
-          const ct2 = ctKey ? headers[ctKey].join("").toLowerCase() : "";
-          if (isPdfUrl || ct2.includes("pdf")) {
-            pdfLog(`  → Forcing Content-Disposition: inline`);
-            headers[cdKey] = ["inline"];
-          }
-        }
         callback({ responseHeaders: headers });
+      });
+      portalSession.on("will-download", (_event, item) => {
+        const url = item.getURL();
+        const mime = item.getMimeType();
+        if (url.includes("ImprPDF") || url.includes("InSeNaCoder") || mime === "application/pdf") {
+          const savePath = path.join(electron.app.getPath("temp"), `resolucion-${Date.now()}.pdf`);
+          pdfLog(`WILL-DOWNLOAD PDF url=${url} mime=${mime} → saving to ${savePath}`);
+          item.setSavePath(savePath);
+          item.once("done", (_ev, state) => {
+            if (state === "completed") {
+              pdfLog(`PDF saved OK → opening with system viewer`);
+              electron.shell.openPath(savePath);
+            } else {
+              pdfLog(`PDF download failed: state=${state}`);
+            }
+          });
+        }
       });
       const selectCertHandler = (event, eventWebContents, _url, list, callback) => {
         if (eventWebContents.session !== portalSession) return;

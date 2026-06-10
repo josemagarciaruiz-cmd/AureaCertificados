@@ -557,34 +557,50 @@ export function registerCertificateHandlers(): void {
           }
         }
 
-        // Si no hay Content-Type en una URL que sabemos que es PDF, inyectarlo
-        if (isPdfUrl && !ctKey) {
-          pdfLog(`  → INJECTING Content-Type: application/pdf (server sent none)`)
+        // Para URLs de PDF: forzar descarga (attachment) y content-type correcto.
+        // PDFium de Electron 29 NO renderiza PDFs en <iframe> con sandbox:true.
+        // La solución robusta: descargar el PDF y abrirlo con el visor del sistema.
+        if (isPdfUrl) {
+          pdfLog(`  → PDF URL detected: forcing attachment download`)
           headers['content-type'] = ['application/pdf']
+          headers['content-disposition'] = ['attachment; filename="resolucion.pdf"']
+          // Eliminar también X-Frame-Options (defensa en profundidad)
+          if (xfoKey) { delete headers[xfoKey]; pdfLog(`  → Removing X-Frame-Options`) }
+          // Eliminar CSP que pudiera interferir
+          const cspKey2 = Object.keys(headers).find((k) => k.toLowerCase() === 'content-security-policy')
+          if (cspKey2) { delete headers[cspKey2] }
+          callback({ responseHeaders: headers })
+          return
         }
 
-        // Si el Content-Type es octet-stream para una URL PDF, corregirlo
-        if (isPdfUrl && ct === 'application/octet-stream') {
-          pdfLog(`  → FIXING Content-Type: application/octet-stream → application/pdf`)
-          headers[ctKey!] = ['application/pdf']
-        }
-
-        // Eliminar X-Frame-Options en todos los casos
+        // Para el resto de respuestas: solo eliminar X-Frame-Options
         if (xfoKey) {
           pdfLog(`  → Removing X-Frame-Options`)
           delete headers[xfoKey]
         }
 
-        // Forzar Content-Disposition: inline para PDFs (no attachment)
-        if (cdKey) {
-          const ct2 = ctKey ? (headers[ctKey] as string[]).join('').toLowerCase() : ''
-          if (isPdfUrl || ct2.includes('pdf')) {
-            pdfLog(`  → Forcing Content-Disposition: inline`)
-            headers[cdKey] = ['inline']
-          }
-        }
-
         callback({ responseHeaders: headers })
+      })
+
+      // ── Auto-open PDF downloads desde el portal ────────────────────────────────────
+      // Cuando ImprPDF/InSeNaCoder devuelve el PDF con Content-Disposition:attachment,
+      // Electron dispara will-download. Lo guardamos en temp y abrimos con el visor del SO.
+      portalSession.on('will-download', (_event, item) => {
+        const url = item.getURL()
+        const mime = item.getMimeType()
+        if (url.includes('ImprPDF') || url.includes('InSeNaCoder') || mime === 'application/pdf') {
+          const savePath = join(app.getPath('temp'), `resolucion-${Date.now()}.pdf`)
+          pdfLog(`WILL-DOWNLOAD PDF url=${url} mime=${mime} → saving to ${savePath}`)
+          item.setSavePath(savePath)
+          item.once('done', (_ev, state) => {
+            if (state === 'completed') {
+              pdfLog(`PDF saved OK → opening with system viewer`)
+              shell.openPath(savePath)
+            } else {
+              pdfLog(`PDF download failed: state=${state}`)
+            }
+          })
+        }
       })
 
       const selectCertHandler = (
