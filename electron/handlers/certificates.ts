@@ -542,31 +542,39 @@ export function registerCertificateHandlers(): void {
         const cdKey = Object.keys(headers).find((k) => k.toLowerCase() === 'content-disposition')
         const xfoKey = Object.keys(headers).find((k) => k.toLowerCase() === 'x-frame-options')
         const ct = ctKey ? (headers[ctKey] as string[]).join('') : ''
+        // Es PDF si: el Content-Type dice "application/pdf" O la URL contiene patrones conocidos
+        const isPdfCt = ct.toLowerCase().includes('application/pdf')
         const isPdfUrl = details.url.toLowerCase().includes('imprpdf') ||
-                         details.url.toLowerCase().includes('inserseñacoder') ||
                          details.url.toLowerCase().includes('insenacoder') ||
+                         details.url.toLowerCase().includes('viewdoc') ||
                          details.url.toLowerCase().includes('generapdf') ||
                          details.url.toLowerCase().includes('.pdf')
-        const isPdfCt = ct.toLowerCase().includes('pdf') || ct === 'application/octet-stream'
+        const isPdf = isPdfCt || isPdfUrl
 
-        // Para el endpoint de PDF: volcar TODAS las cabeceras para diagnóstico completo
-        if (isPdfUrl || isPdfCt) {
+        // Para cualquier PDF: volcar TODAS las cabeceras
+        if (isPdf) {
           pdfLog(`=== PDF ENDPOINT ${details.statusCode} ${details.url} ===`)
           for (const [k, v] of Object.entries(headers)) {
             pdfLog(`  ${k}: ${Array.isArray(v) ? v.join(', ') : v}`)
           }
         }
 
-        // Para URLs de PDF: forzar descarga (attachment) y content-type correcto.
         // PDFium de Electron 29 NO renderiza PDFs en <iframe> con sandbox:true.
-        // La solución robusta: descargar el PDF y abrirlo con el visor del sistema.
-        if (isPdfUrl) {
-          pdfLog(`  → PDF URL detected: forcing attachment download`)
+        // Solución: forzar attachment para que will-download lo capture y abra con el visor del SO.
+        if (isPdf) {
+          // Preservar el nombre de fichero original si el servidor lo envía
+          let filename = 'documento.pdf'
+          if (cdKey) {
+            const cdVal = (headers[cdKey] as string[]).join('')
+            const fnMatch = cdVal.match(/filename[^;=\n]*=(["']?)([^"'\n;]+)\1/i)
+            if (fnMatch?.[2]) {
+              filename = decodeURIComponent(fnMatch[2].replace(/\+/g, ' ').trim()) || 'documento.pdf'
+            }
+          }
+          pdfLog(`  → Forcing attachment download: filename="${filename}"`)
           headers['content-type'] = ['application/pdf']
-          headers['content-disposition'] = ['attachment; filename="resolucion.pdf"']
-          // Eliminar también X-Frame-Options (defensa en profundidad)
+          headers['content-disposition'] = [`attachment; filename="${filename}"`]
           if (xfoKey) { delete headers[xfoKey]; pdfLog(`  → Removing X-Frame-Options`) }
-          // Eliminar CSP que pudiera interferir
           const cspKey2 = Object.keys(headers).find((k) => k.toLowerCase() === 'content-security-policy')
           if (cspKey2) { delete headers[cspKey2] }
           callback({ responseHeaders: headers })
