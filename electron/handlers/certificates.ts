@@ -571,12 +571,19 @@ export function registerCertificateHandlers(): void {
               filename = decodeURIComponent(fnMatch[2].replace(/\+/g, ' ').trim()) || 'documento.pdf'
             }
           }
-          pdfLog(`  → Forcing attachment download: filename="${filename}"`)
+          pdfLog(`  → Forcing attachment: filename="${filename}" isPdfCt=${isPdfCt} isPdfUrl=${isPdfUrl}`)
+          // CRÍTICO: borrar las claves originales (ej. "Content-type", "Content-disposition")
+          // antes de establecer las nuevas en minúsculas. Sin este paso, Chromium recibe
+          // AMBAS cabeceras (ej. "Content-disposition: inline" + "content-disposition: attachment")
+          // y usa la primera, ignorando nuestra corrección → página en blanco (bug SEPE).
+          if (ctKey) delete headers[ctKey]
+          if (cdKey) delete headers[cdKey]
+          if (xfoKey) delete headers[xfoKey]
+          const cspKey2 = Object.keys(headers).find((k) => k.toLowerCase() === 'content-security-policy')
+          if (cspKey2) delete headers[cspKey2]
           headers['content-type'] = ['application/pdf']
           headers['content-disposition'] = [`attachment; filename="${filename}"`]
-          if (xfoKey) { delete headers[xfoKey]; pdfLog(`  → Removing X-Frame-Options`) }
-          const cspKey2 = Object.keys(headers).find((k) => k.toLowerCase() === 'content-security-policy')
-          if (cspKey2) { delete headers[cspKey2] }
+          pdfLog(`  → callback(attachment) enviado`)
           callback({ responseHeaders: headers })
           return
         }
@@ -737,23 +744,12 @@ export function registerCertificateHandlers(): void {
         },
       }))
 
-      // Some portals deliver the resolution as a download (Content-Disposition:
-      // attachment) instead of an inline PDF. Without a handler the download would
-      // vanish silently and the popup would stay blank. Prompt for a save location
-      // and open the file when finished so the user can actually read it.
-      const downloadHandler = (_e: Electron.Event, item: Electron.DownloadItem): void => {
-        const suggested = item.getFilename() || 'resolucion.pdf'
-        const savePath = dialog.showSaveDialogSync(win, {
-          title: 'Guardar documento',
-          defaultPath: join(app.getPath('downloads'), suggested),
-        })
-        if (!savePath) { item.cancel(); return }
-        item.setSavePath(savePath)
-        item.once('done', (_evt, state) => {
-          if (state === 'completed') { try { shell.openPath(savePath) } catch { /* ignore */ } }
-        })
-      }
-      portalSession.on('will-download', downloadHandler)
+      // NOTA: el manejador de descargas está consolidado en el listener 'will-download'
+      // registrado arriba (auto-guarda en resolDir y abre con el visor del SO).
+      // El antiguo downloadHandler con dialog.showSaveDialogSync se ha eliminado porque
+      // entraba en conflicto: ambos listeners se ejecutaban y el diálogo podía cancelar
+      // la descarga que el primer listener ya había iniciado.
+      const downloadHandler = (_e: Electron.Event, _item: Electron.DownloadItem): void => { /* consolidado arriba */ }
 
       // F12 opens DevTools in the portal window for live debugging
       win.webContents.on('before-input-event', (_e, input) => {
@@ -781,7 +777,6 @@ export function registerCertificateHandlers(): void {
 
       win.on('closed', () => {
         try { app.removeListener('select-client-certificate', selectCertHandler) } catch { /* ignore */ }
-        try { portalSession.removeListener('will-download', downloadHandler) } catch { /* ignore */ }
         cleanup()
       })
 
