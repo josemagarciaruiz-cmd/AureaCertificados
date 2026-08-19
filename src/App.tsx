@@ -8,6 +8,7 @@ import Clients from '@pages/Clients'
 import Certificates from '@pages/Certificates'
 import TramitesAEAT from '@pages/TramitesAEAT'
 import TramitesTGSS from '@pages/TramitesTGSS'
+import TramitesJusticia from '@pages/TramitesJusticia'
 import Calendar from '@pages/Calendar'
 import Notifications from '@pages/Notifications'
 import Settings from '@pages/Settings'
@@ -59,6 +60,7 @@ export default function App() {
           <Route path="/accesos-directos" element={<AccesosDirectos />} />
           <Route path="/tramites/aeat" element={<TramitesAEAT />} />
           <Route path="/tramites/tgss" element={<TramitesTGSS />} />
+          <Route path="/tramites/justicia" element={<TramitesJusticia />} />
           <Route path="/calendar" element={<Calendar />} />
           <Route path="/notifications" element={<Notifications />} />
           <Route path="/settings" element={<Settings />} />
