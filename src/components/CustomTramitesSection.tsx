@@ -18,7 +18,7 @@ export interface Block {
 }
 
 interface Props {
-  category: 'aeat' | 'tgss'
+  category: 'aeat' | 'tgss' | 'justicia'
   blocks: Block[]
 }
 
