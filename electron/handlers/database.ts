@@ -54,6 +54,30 @@ function runMigrations(): void {
       installed_at TEXT NOT NULL DEFAULT (datetime('now'))
     );
   `)
+
+  // v1.0.24 — Justicia / LexNET: widen the custom_tramites category CHECK constraint.
+  // SQLite cannot ALTER a CHECK constraint, so the table is rebuilt when the stored
+  // schema still lacks 'justicia'. Fresh installs already get it from createTables().
+  const ctSchema = db
+    .prepare("SELECT sql FROM sqlite_master WHERE type='table' AND name='custom_tramites'")
+    .get() as { sql: string } | undefined
+  if (ctSchema && !ctSchema.sql.includes("'justicia'")) {
+    db.exec(`
+      CREATE TABLE custom_tramites_new (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        name TEXT NOT NULL,
+        category TEXT NOT NULL DEFAULT 'aeat' CHECK(category IN ('aeat','tgss','justicia')),
+        subcategory TEXT NOT NULL DEFAULT '',
+        portal_url TEXT NOT NULL,
+        description TEXT NOT NULL DEFAULT '',
+        created_at TEXT NOT NULL DEFAULT (datetime('now'))
+      );
+      INSERT INTO custom_tramites_new (id, name, category, subcategory, portal_url, description, created_at)
+        SELECT id, name, category, subcategory, portal_url, description, created_at FROM custom_tramites;
+      DROP TABLE custom_tramites;
+      ALTER TABLE custom_tramites_new RENAME TO custom_tramites;
+    `)
+  }
 }
 
 function createTables(): void {
@@ -182,7 +206,7 @@ function createTables(): void {
     CREATE TABLE IF NOT EXISTS custom_tramites (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       name TEXT NOT NULL,
-      category TEXT NOT NULL DEFAULT 'aeat' CHECK(category IN ('aeat','tgss')),
+      category TEXT NOT NULL DEFAULT 'aeat' CHECK(category IN ('aeat','tgss','justicia')),
       portal_url TEXT NOT NULL,
       description TEXT NOT NULL DEFAULT '',
       created_at TEXT NOT NULL DEFAULT (datetime('now'))
