@@ -17,6 +17,7 @@ const nav = [
     items: [
       { path: '/tramites/aeat', label: 'AEAT', icon: IconAEAT },
       { path: '/tramites/tgss', label: 'TGSS', icon: IconTGSS },
+      { path: '/tramites/justicia', label: 'Justicia · LexNET', icon: IconJusticia },
     ],
   },
   {
@@ -167,6 +168,14 @@ function IconTGSS({ size = 18 }: { size?: number }) {
   return (
     <svg width={size} height={size} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
       <path strokeLinecap="round" strokeLinejoin="round" d="M17 9V7a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2m2 4h10a2 2 0 002-2v-6a2 2 0 00-2-2H9a2 2 0 00-2 2v6a2 2 0 002 2zm7-5a2 2 0 11-4 0 2 2 0 014 0z" />
+    </svg>
+  )
+}
+
+function IconJusticia({ size = 18 }: { size?: number }) {
+  return (
+    <svg width={size} height={size} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+      <path strokeLinecap="round" strokeLinejoin="round" d="M12 3v18m-7-3h14M6 7l-3 6h6l-3-6zm12 0l-3 6h6l-3-6zM5 7h14" />
     </svg>
   )
 }
