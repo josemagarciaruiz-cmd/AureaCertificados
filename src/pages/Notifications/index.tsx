@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { format, parseISO, differenceInDays } from 'date-fns'
 import { es } from 'date-fns/locale'
 import DehuPanel from '@components/DehuPanel'
+import LexnetPanel from '@components/LexnetPanel'
 
 interface Notification {
   id: number
@@ -45,7 +46,7 @@ export default function Notifications() {
   const [notifications, setNotifications] = useState<Notification[]>([])
   const [statusFilter, setStatusFilter] = useState('all')
   const [refreshing, setRefreshing] = useState(false)
-  const [activeTab, setActiveTab] = useState<'alerts' | 'dehu'>('alerts')
+  const [activeTab, setActiveTab] = useState<'alerts' | 'dehu' | 'lexnet'>('alerts')
 
   const load = () =>
     window.api.notifications.getAll().then((data) => setNotifications(data as Notification[]))
@@ -113,10 +114,20 @@ export default function Notifications() {
         >
           Buzón DEHU
         </button>
+        <button
+          className={activeTab === 'lexnet' ? 'btn-primary' : 'btn-ghost'}
+          style={{ padding: '0.5rem 1rem', fontSize: '11px', borderRadius: '4px 4px 0 0', marginBottom: '-1px' }}
+          onClick={() => setActiveTab('lexnet')}
+        >
+          Buzón LexNET
+        </button>
       </div>
 
       {/* DEHU panel */}
       {activeTab === 'dehu' && <DehuPanel />}
+
+      {/* LexNET panel */}
+      {activeTab === 'lexnet' && <LexnetPanel />}
 
       {/* Alerts panel */}
       {activeTab === 'alerts' && <>
