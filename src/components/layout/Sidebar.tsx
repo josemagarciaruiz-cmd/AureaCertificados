@@ -1,3 +1,4 @@
+import { useEffect, useState } from 'react'
 import { NavLink } from 'react-router-dom'
 import { useCertPicker } from '@contexts/CertPickerContext'
 
@@ -31,6 +32,16 @@ const nav = [
 
 export default function Sidebar() {
   const { openCertPicker } = useCertPicker()
+  // Versión real de la app: Electron la lee de package.json en desarrollo y de los
+  // metadatos del paquete instalado en producción, así que se actualiza sola en cada
+  // release sin tener que tocar este archivo.
+  const [version, setVersion] = useState('')
+
+  useEffect(() => {
+    window.api.app.getVersion()
+      .then(setVersion)
+      .catch(() => setVersion(''))
+  }, [])
 
   return (
     <aside
@@ -111,13 +122,14 @@ export default function Sidebar() {
         style={{ borderColor: 'var(--color-border)' }}
       >
         <div
+          title={version ? `Versión instalada: ${version}` : 'Leyendo versión...'}
           style={{
             fontFamily: 'var(--font-mono)',
             fontSize: '10px',
             color: 'var(--color-text-muted)',
           }}
         >
-          v1.0.0
+          {version ? `v${version}` : '—'}
         </div>
       </div>
     </aside>
