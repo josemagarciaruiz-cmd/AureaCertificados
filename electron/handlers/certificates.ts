@@ -597,7 +597,7 @@ export function registerCertificateHandlers(): void {
         callback({ responseHeaders: headers })
       })
 
-      // ── Auto-open PDF downloads desde el portal ──────────────────────────────────
+      // ── Auto-open PDF downloads desde el portal ────────────────────────────────────
       // Cuando ImprPDF/InSeNaCoder devuelve el PDF con Content-Disposition:attachment,
       // Electron dispara will-download. Lo guardamos en temp y abrimos con el visor del SO.
       // Directorio persistente para resoluciones descargadas (no Temp, que se autolimpia)
