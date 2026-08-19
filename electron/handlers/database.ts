@@ -246,7 +246,9 @@ function seedDefaultSettings(): void {
     ['smtp_pass', ''],
     ['smtp_from', ''],
     ['lock_timeout_minutes', '15'],
-    ['app_version', '1.0.0'],
+    // Nada de 'app_version' aquí: se sembraba una sola vez con INSERT OR IGNORE y se
+    // quedaba congelado en la versión inicial. La versión real se pide a Electron con
+    // app.getVersion(), que es la única fuente fiable.
   ]
   for (const [key, value] of defaults) {
     insert.run(key, value)
