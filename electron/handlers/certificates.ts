@@ -416,7 +416,7 @@ export function registerCertificateHandlers(): void {
       try { unlinkSync(tempPath) } catch { /* ignore */ }
       if (process.platform === 'win32' && winThumbprint) {
         exec(
-          `powershell -Command "Remove-Item -Path 'Cert:\\\\CurrentUser\\\\My\\\\${winThumbprint}' -DeleteKey -ErrorAction SilentlyContinue"`,
+          `powershell -Command "Remove-Item -Path 'Cert:\\CurrentUser\\My\\${winThumbprint}' -DeleteKey -ErrorAction SilentlyContinue"`,
           { timeout: 10000 },
           () => { /* ignore result */ }
         )
@@ -440,7 +440,7 @@ export function registerCertificateHandlers(): void {
         // -Command "..." caused variables like $certPwd to be stripped by the shell layer.
         const psImportScript = [
           `$certPwd = ConvertTo-SecureString -String '${tempPass}' -Force -AsPlainText`,
-          `$cert = Import-PfxCertificate -FilePath '${tempPath}' -CertStoreLocation Cert:\\\\CurrentUser\\\\My -Password $certPwd -Exportable`,
+          `$cert = Import-PfxCertificate -FilePath '${tempPath}' -CertStoreLocation Cert:\\CurrentUser\\My -Password $certPwd -Exportable`,
           `Write-Output $cert.Thumbprint`
         ].join('\n')
         const psImportEncoded = Buffer.from(psImportScript, 'utf16le').toString('base64')
@@ -478,7 +478,7 @@ export function registerCertificateHandlers(): void {
           // in Certificate.serialNumber inside select-client-certificate.
           try {
             const { stdout: serialOut } = await execAsync(
-              `powershell -NonInteractive -Command "(Get-Item 'Cert:\\\\CurrentUser\\\\My\\\\${winThumbprint}').SerialNumber"`,
+              `powershell -NonInteractive -Command "(Get-Item 'Cert:\\CurrentUser\\My\\${winThumbprint}').SerialNumber"`,
               { encoding: 'utf8', timeout: 10000 }
             )
             winSerialNumber = serialOut.trim().toLowerCase()
@@ -489,7 +489,7 @@ export function registerCertificateHandlers(): void {
           // is 100 % guaranteed to match Certificate.fingerprint in select-client-certificate.
           try {
             const { stdout: b64Out } = await execAsync(
-              `powershell -NonInteractive -Command "$c = Get-Item 'Cert:\\\\CurrentUser\\\\My\\\\${winThumbprint}'; [System.Convert]::ToBase64String($c.Export([System.Security.Cryptography.X509Certificates.X509ContentType]::Cert))"`,
+              `powershell -NonInteractive -Command "$c = Get-Item 'Cert:\\CurrentUser\\My\\${winThumbprint}'; [System.Convert]::ToBase64String($c.Export([System.Security.Cryptography.X509Certificates.X509ContentType]::Cert))"`,
               { encoding: 'utf8', timeout: 10000 }
             )
             const derBuffer = Buffer.from(b64Out.trim(), 'base64')
@@ -523,7 +523,7 @@ export function registerCertificateHandlers(): void {
       const partition = `cert-${data.certId}-${Date.now()}`
       const portalSession = session.fromPartition(partition)
 
-      // ── Diagnostic helper ────────────────────────────────────────────────────────
+      // ── Diagnostic helper ──────────────────────────────────────────────────────
       const pdfLogPath = join(app.getPath('userData'), 'pdf_debug.log')
       const pdfLog = (msg: string) => {
         try { appendFileSync(pdfLogPath, `[${new Date().toISOString()}] ${msg}\n`) } catch { /* non-blocking */ }
@@ -909,7 +909,7 @@ async function scanWindowsCertStore(): Promise<unknown[]> {
     // Note: CNG certs with Export Policy = 0 are shown as exportable='cng_locked' — the import
     // function can still handle them by forcing the policy to 3 before exporting.
     const psScript = `
-$certs = Get-ChildItem Cert:\\\\CurrentUser\\\\My | Where-Object { $_.HasPrivateKey }
+$certs = Get-ChildItem Cert:\\CurrentUser\\My | Where-Object { $_.HasPrivateKey }
 $result = foreach ($c in $certs) {
     $exportable = try {
         # Legacy CAPI
@@ -980,7 +980,7 @@ async function importCertFromWindowsStore(
     // 4. Exports to a temporary PFX with a random password
     const psScript = `
 $ErrorActionPreference = 'Stop'
-$cert = Get-ChildItem -Path 'Cert:\\\\CurrentUser\\\\My\\\\${thumbprint}'
+$cert = Get-ChildItem -Path 'Cert:\\CurrentUser\\My\\${thumbprint}'
 if (-not $cert) { throw 'Certificado no encontrado en el almacen' }
 
 # Try to mark CNG RSA key as exportable (FNMT and modern certs use CNG)
