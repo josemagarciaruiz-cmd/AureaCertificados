@@ -85,6 +85,15 @@ const api = {
     delete: (id: number) => ipcRenderer.invoke('shortcuts:delete', id),
     recordUse: (id: number) => ipcRenderer.invoke('shortcuts:recordUse', id),
   },
+  festivos: {
+    getLocations: () => ipcRenderer.invoke('festivos:getLocations'),
+    loadYear: (data: { ccaa: string; isla?: string | null; year: number }) =>
+      ipcRenderer.invoke('festivos:loadYear', data),
+    getByYear: (year: number) => ipcRenderer.invoke('festivos:getByYear', year),
+    addLocal: (data: { year: number; fecha: string; nombre: string; municipio?: string | null }) =>
+      ipcRenderer.invoke('festivos:addLocal', data),
+    delete: (id: number) => ipcRenderer.invoke('festivos:delete', id),
+  },
 }
 
 contextBridge.exposeInMainWorld('api', api)

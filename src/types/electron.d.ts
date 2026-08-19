@@ -29,6 +29,7 @@ declare global {
       }
       certificates: {
         getAll: () => Promise<unknown[]>
+        getAllMeta: () => Promise<unknown[]>
         getByClient: (clientId: number) => Promise<unknown[]>
         import: (data: unknown) => Promise<unknown>
         delete: (id: number) => Promise<unknown>
@@ -36,7 +37,8 @@ declare global {
         openPortal: (certId: number, url: string) => Promise<unknown>
         openBatchPortal: (data: { certs: Array<{ id: number; serialNumber: string; alias: string }>; url: string }) => Promise<unknown>
         scanOsStore: () => Promise<unknown[]>
-        importFromOsStore: (data: { thumbprint: string; alias: string; clientId: number | null; masterPassword: string }) => Promise<unknown>
+        cleanOsStore: () => Promise<{ cleaned: number }>
+        importFromOsStore: (data: { thumbprint: string; alias: string; clientId: number | null; masterPassword: string; password?: string }) => Promise<unknown>
         parseP12: (filePath: string, password: string) => Promise<unknown>
         openPortalWithCert: (data: { certId: number; url: string; masterPassword: string }) => Promise<unknown>
       }
@@ -84,6 +86,27 @@ declare global {
         update: (id: number, data: { name?: string; url?: string; certificate_id?: number | null; color?: string; notes?: string }) => Promise<unknown>
         delete: (id: number) => Promise<unknown>
         recordUse: (id: number) => Promise<unknown>
+      }
+      festivos: {
+        getLocations: () => Promise<{
+          ccaa: Array<{ code: string; name: string }>
+          islas: Array<{ code: string; name: string }>
+          anios: number[]
+        }>
+        loadYear: (data: { ccaa: string; isla?: string | null; year: number }) => Promise<{ success: boolean; count?: number; error?: string }>
+        getByYear: (year: number) => Promise<Array<{
+          id: number
+          year: number
+          fecha: string
+          nombre: string
+          ambito: 'nacional' | 'autonomico' | 'insular' | 'local'
+          ccaa: string | null
+          isla: string | null
+          municipio: string | null
+          source: 'builtin' | 'manual' | 'import'
+        }>>
+        addLocal: (data: { year: number; fecha: string; nombre: string; municipio?: string | null }) => Promise<{ success: boolean }>
+        delete: (id: number) => Promise<{ success: boolean }>
       }
     }
   }

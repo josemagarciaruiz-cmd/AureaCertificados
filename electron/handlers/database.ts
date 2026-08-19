@@ -212,6 +212,18 @@ function createTables(): void {
       created_at TEXT NOT NULL DEFAULT (datetime('now'))
     );
 
+    CREATE TABLE IF NOT EXISTS festivos (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      year INTEGER NOT NULL,
+      fecha TEXT NOT NULL,
+      nombre TEXT NOT NULL,
+      ambito TEXT NOT NULL CHECK(ambito IN ('nacional','autonomico','insular','local')),
+      ccaa TEXT,
+      isla TEXT,
+      municipio TEXT,
+      source TEXT NOT NULL DEFAULT 'builtin' CHECK(source IN ('builtin','manual','import'))
+    );
+
     CREATE INDEX IF NOT EXISTS idx_certificates_client ON certificates(client_id);
     CREATE INDEX IF NOT EXISTS idx_certificates_valid_to ON certificates(valid_to);
     CREATE INDEX IF NOT EXISTS idx_audit_log_cert ON audit_log(certificate_id);
@@ -222,6 +234,7 @@ function createTables(): void {
     CREATE INDEX IF NOT EXISTS idx_notifications_client ON notifications(client_id);
     CREATE INDEX IF NOT EXISTS idx_notifications_status ON notifications(status);
     CREATE INDEX IF NOT EXISTS idx_fiscal_year_month ON fiscal_calendar(year, month);
+    CREATE INDEX IF NOT EXISTS idx_festivos_year ON festivos(year);
   `)
 
   seedDefaultSettings()
@@ -246,6 +259,10 @@ function seedDefaultSettings(): void {
     ['smtp_pass', ''],
     ['smtp_from', ''],
     ['lock_timeout_minutes', '15'],
+    // Ubicación para el calendario laboral (festivos). Vacío hasta que el usuario la fije.
+    ['festivos_ccaa', ''],
+    ['festivos_isla', ''],
+    ['festivos_municipio', ''],
     // Nada de 'app_version' aquí: se sembraba una sola vez con INSERT OR IGNORE y se
     // quedaba congelado en la versión inicial. La versión real se pide a Electron con
     // app.getVersion(), que es la única fuente fiable.
