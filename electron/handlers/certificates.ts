@@ -416,7 +416,7 @@ export function registerCertificateHandlers(): void {
       try { unlinkSync(tempPath) } catch { /* ignore */ }
       if (process.platform === 'win32' && winThumbprint) {
         exec(
-          `powershell -Command "Remove-Item -Path 'Cert:\\CurrentUser\\My\\${winThumbprint}' -DeleteKey -ErrorAction SilentlyContinue"`,
+          `powershell -Command "Remove-Item -Path 'Cert:\\\\CurrentUser\\\\My\\\\${winThumbprint}' -DeleteKey -ErrorAction SilentlyContinue"`,
           { timeout: 10000 },
           () => { /* ignore result */ }
         )
@@ -440,7 +440,7 @@ export function registerCertificateHandlers(): void {
         // -Command "..." caused variables like $certPwd to be stripped by the shell layer.
         const psImportScript = [
           `$certPwd = ConvertTo-SecureString -String '${tempPass}' -Force -AsPlainText`,
-          `$cert = Import-PfxCertificate -FilePath '${tempPath}' -CertStoreLocation Cert:\\CurrentUser\\My -Password $certPwd -Exportable`,
+          `$cert = Import-PfxCertificate -FilePath '${tempPath}' -CertStoreLocation Cert:\\\\CurrentUser\\\\My -Password $certPwd -Exportable`,
           `Write-Output $cert.Thumbprint`
         ].join('\n')
         const psImportEncoded = Buffer.from(psImportScript, 'utf16le').toString('base64')
@@ -478,7 +478,7 @@ export function registerCertificateHandlers(): void {
           // in Certificate.serialNumber inside select-client-certificate.
           try {
             const { stdout: serialOut } = await execAsync(
-              `powershell -NonInteractive -Command "(Get-Item 'Cert:\\CurrentUser\\My\\${winThumbprint}').SerialNumber"`,
+              `powershell -NonInteractive -Command "(Get-Item 'Cert:\\\\CurrentUser\\\\My\\\\${winThumbprint}').SerialNumber"`,
               { encoding: 'utf8', timeout: 10000 }
             )
             winSerialNumber = serialOut.trim().toLowerCase()
@@ -489,7 +489,7 @@ export function registerCertificateHandlers(): void {
           // is 100 % guaranteed to match Certificate.fingerprint in select-client-certificate.
           try {
             const { stdout: b64Out } = await execAsync(
-              `powershell -NonInteractive -Command "$c = Get-Item 'Cert:\\CurrentUser\\My\\${winThumbprint}'; [System.Convert]::ToBase64String($c.Export([System.Security.Cryptography.X509Certificates.X509ContentType]::Cert))"`,
+              `powershell -NonInteractive -Command "$c = Get-Item 'Cert:\\\\CurrentUser\\\\My\\\\${winThumbprint}'; [System.Convert]::ToBase64String($c.Export([System.Security.Cryptography.X509Certificates.X509ContentType]::Cert))"`,
               { encoding: 'utf8', timeout: 10000 }
             )
             const derBuffer = Buffer.from(b64Out.trim(), 'base64')
@@ -523,7 +523,7 @@ export function registerCertificateHandlers(): void {
       const partition = `cert-${data.certId}-${Date.now()}`
       const portalSession = session.fromPartition(partition)
 
-      // ── Diagnostic helper ──────────────────────────────────────────────────────
+      // ── Diagnostic helper ────────────────────────────────────────────────────────
       const pdfLogPath = join(app.getPath('userData'), 'pdf_debug.log')
       const pdfLog = (msg: string) => {
         try { appendFileSync(pdfLogPath, `[${new Date().toISOString()}] ${msg}\n`) } catch { /* non-blocking */ }
@@ -597,7 +597,7 @@ export function registerCertificateHandlers(): void {
         callback({ responseHeaders: headers })
       })
 
-      // ── Auto-open PDF downloads desde el portal ────────────────────────────────────
+      // ── Auto-open PDF downloads desde el portal ──────────────────────────────────
       // Cuando ImprPDF/InSeNaCoder devuelve el PDF con Content-Disposition:attachment,
       // Electron dispara will-download. Lo guardamos en temp y abrimos con el visor del SO.
       // Directorio persistente para resoluciones descargadas (no Temp, que se autolimpia)
@@ -722,6 +722,19 @@ export function registerCertificateHandlers(): void {
       // the handler itself filters by session so only this portal is affected.
       app.on('select-client-certificate', selectCertHandler)
 
+      // Custom-scheme handoff (Autofirma & co.). Spanish judicial and administrative
+      // portals — LexNET above all, but also Cl@ve Firma and @firma — launch the desktop
+      // signing application through a custom URL scheme. Chromium inside Electron has no
+      // OS protocol handler registered for these, so the navigation dies silently and the
+      // signature dialog never appears (escritos cannot be signed or filed). Delegating
+      // the URL to the OS lets the installed Autofirma take over, exactly as it would
+      // from a normal browser.
+      const EXTERNAL_SCHEMES = /^(afirma|afirmagob|autofirma|clavefirma):/i
+      const handoffToOs = (url: string): void => {
+        pdfLog(`EXTERNAL SCHEME → OS: ${url}`)
+        shell.openExternal(url).catch(() => pdfLog(`  → openExternal FAILED for ${url}`))
+      }
+
       const win = new BrowserWindow({
         width: 1280,
         height: 900,
@@ -735,14 +748,22 @@ export function registerCertificateHandlers(): void {
       // Keep any popup the portal opens INSIDE the same partition/session, so the
       // app-level interceptor above also governs its TLS client-certificate request.
       // plugins:true is repeated so PDF resolutions opened in a popup also render.
-      win.webContents.setWindowOpenHandler(() => ({
-        action: 'allow',
-        overrideBrowserWindowOptions: {
-          width: 1280,
-          height: 900,
-          webPreferences: { sandbox: true, partition, plugins: true },
-        },
-      }))
+      win.webContents.setWindowOpenHandler(({ url }) => {
+        // Autofirma & co. are launched via window.open() by some portals — hand the URL
+        // to the OS instead of trying to open an unusable Chromium window for it.
+        if (EXTERNAL_SCHEMES.test(url)) {
+          handoffToOs(url)
+          return { action: 'deny' }
+        }
+        return {
+          action: 'allow',
+          overrideBrowserWindowOptions: {
+            width: 1280,
+            height: 900,
+            webPreferences: { sandbox: true, partition, plugins: true },
+          },
+        }
+      })
 
       // NOTA: el manejador de descargas está consolidado en el listener 'will-download'
       // registrado arriba (auto-guarda en resolDir y abre con el visor del SO).
@@ -756,7 +777,13 @@ export function registerCertificateHandlers(): void {
         if (input.type === 'keyDown' && input.key === 'F12') win.webContents.openDevTools()
       })
       // Log every navigation inside the portal so we know exactly what URL the resolution opens
-      win.webContents.on('will-navigate', (_e, url) => pdfLog(`NAVIGATE ${url}`))
+      win.webContents.on('will-navigate', (e, url) => {
+        pdfLog(`NAVIGATE ${url}`)
+        if (EXTERNAL_SCHEMES.test(url)) {
+          e.preventDefault()
+          handoffToOs(url)
+        }
+      })
       win.webContents.on('did-navigate', (_e, url) => pdfLog(`DID-NAVIGATE ${url}`))
       win.webContents.on('did-navigate-in-page', (_e, url) => pdfLog(`SPA-NAVIGATE ${url}`))
       // Log popups and enable F12 in them too
@@ -765,7 +792,13 @@ export function registerCertificateHandlers(): void {
         childWin.webContents.on('before-input-event', (_e, input) => {
           if (input.type === 'keyDown' && input.key === 'F12') childWin.webContents.openDevTools()
         })
-        childWin.webContents.on('will-navigate', (_e, url) => pdfLog(`POPUP NAVIGATE ${url}`))
+        childWin.webContents.on('will-navigate', (e, url) => {
+          pdfLog(`POPUP NAVIGATE ${url}`)
+          if (EXTERNAL_SCHEMES.test(url)) {
+            e.preventDefault()
+            handoffToOs(url)
+          }
+        })
         childWin.webContents.on('did-navigate', (_e, url) => pdfLog(`POPUP DID-NAVIGATE ${url}`))
         childWin.webContents.on('did-finish-load', () => pdfLog(`POPUP LOADED ${childWin.webContents.getURL()}`))
       })
@@ -876,7 +909,7 @@ async function scanWindowsCertStore(): Promise<unknown[]> {
     // Note: CNG certs with Export Policy = 0 are shown as exportable='cng_locked' — the import
     // function can still handle them by forcing the policy to 3 before exporting.
     const psScript = `
-$certs = Get-ChildItem Cert:\\CurrentUser\\My | Where-Object { $_.HasPrivateKey }
+$certs = Get-ChildItem Cert:\\\\CurrentUser\\\\My | Where-Object { $_.HasPrivateKey }
 $result = foreach ($c in $certs) {
     $exportable = try {
         # Legacy CAPI
@@ -947,7 +980,7 @@ async function importCertFromWindowsStore(
     // 4. Exports to a temporary PFX with a random password
     const psScript = `
 $ErrorActionPreference = 'Stop'
-$cert = Get-ChildItem -Path 'Cert:\\CurrentUser\\My\\${thumbprint}'
+$cert = Get-ChildItem -Path 'Cert:\\\\CurrentUser\\\\My\\\\${thumbprint}'
 if (-not $cert) { throw 'Certificado no encontrado en el almacen' }
 
 # Try to mark CNG RSA key as exportable (FNMT and modern certs use CNG)
